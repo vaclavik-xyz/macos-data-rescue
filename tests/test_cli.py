@@ -120,7 +120,8 @@ def test_timeout_and_failure_mark_file_and_continue_to_next_file(tmp_path: Path)
     source = tmp_path / "source-home"
     (source / "Desktop").mkdir(parents=True)
     os.mkfifo(source / "Desktop" / "aaa-stuck")
-    os.symlink("missing-target", source / "Desktop" / "bbb-broken")
+    write_file(source / "Desktop" / "bbb-denied.txt", b"denied")
+    os.chmod(source / "Desktop" / "bbb-denied.txt", 0)
     write_file(source / "Desktop" / "ccc-after.txt", b"after")
 
     job_dir, _, dest_dir = init_and_scan(tmp_path, source)
@@ -128,15 +129,62 @@ def test_timeout_and_failure_mark_file_and_continue_to_next_file(tmp_path: Path)
 
     rows = file_rows(job_dir)
     assert rows["Desktop/aaa-stuck"]["status"] == "timed_out"
-    assert rows["Desktop/bbb-broken"]["status"] == "failed"
+    assert rows["Desktop/bbb-denied.txt"]["status"] == "failed"
     assert rows["Desktop/ccc-after.txt"]["status"] == "copied"
     assert (dest_dir / "Desktop" / "ccc-after.txt").read_bytes() == b"after"
+
+
+def test_copy_skips_symlink_without_copying_target_content(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    outside = tmp_path / "outside-secret.txt"
+    outside.write_text("host secret")
+    (source / "Desktop").mkdir(parents=True)
+    os.symlink(outside, source / "Desktop" / "host-link")
+    write_file(source / "Desktop" / "regular.txt", b"regular")
+
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+
+    rows = file_rows(job_dir)
+    assert rows["Desktop/host-link"]["kind"] == "symlink"
+    assert rows["Desktop/host-link"]["status"] == "skipped"
+    assert not (dest_dir / "Desktop" / "host-link").exists()
+    assert (dest_dir / "Desktop" / "regular.txt").read_bytes() == b"regular"
+
+
+def test_temp_path_does_not_clobber_real_mirrored_file(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / ".foo.rescue-tmp", b"real hidden file")
+    write_file(source / "Desktop" / "foo", b"main file")
+
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+
+    assert (dest_dir / "Desktop" / ".foo.rescue-tmp").read_bytes() == b"real hidden file"
+    assert (dest_dir / "Desktop" / "foo").read_bytes() == b"main file"
+
+
+def test_resume_limit_counts_files_that_need_work_not_skipped_matches(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "a.txt", b"a")
+    write_file(source / "Desktop" / "b.txt", b"b")
+    write_file(source / "Desktop" / "c.txt", b"c")
+
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--limit", "1")
+    run_cli("resume", "--job-dir", str(job_dir), "--phase", "important", "--limit", "1")
+
+    rows = file_rows(job_dir)
+    assert rows["Desktop/a.txt"]["status"] == "copied"
+    assert rows["Desktop/b.txt"]["status"] == "copied"
+    assert rows["Desktop/c.txt"]["status"] == "pending"
 
 
 def test_report_outputs_markdown_and_json_summary(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     write_file(source / "Desktop" / "invoice.txt", b"desktop")
-    os.symlink("missing-target", source / "Desktop" / "broken")
+    write_file(source / "Desktop" / "denied.txt", b"denied")
+    os.chmod(source / "Desktop" / "denied.txt", 0)
     job_dir, _, _ = init_and_scan(tmp_path, source)
     run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
 
@@ -148,6 +196,6 @@ def test_report_outputs_markdown_and_json_summary(tmp_path: Path) -> None:
     assert payload["summary"]["copied"]["count"] == 1
     assert payload["summary"]["failed"]["count"] == 1
     assert {item["relative_path"] for item in payload["files"]} == {
-        "Desktop/broken",
+        "Desktop/denied.txt",
         "Desktop/invoice.txt",
     }

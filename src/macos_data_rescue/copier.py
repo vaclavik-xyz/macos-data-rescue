@@ -4,6 +4,7 @@ import multiprocessing
 import os
 import queue
 import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,15 +33,34 @@ class CopySummary:
 def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = None) -> CopySummary:
     config = load_config(job_dir)
     summary = CopySummary()
-    for row in selected_files(job_dir, phase, limit):
-        summary.processed += 1
+    attempted = 0
+    for row in selected_files(job_dir, phase, None):
         source = config.source / row["relative_path"]
         dest = config.dest / row["relative_path"]
         if row["status"] == "copied" and destination_matches(dest, row):
             summary.skipped += 1
             continue
+        if row["status"] == "skipped":
+            summary.skipped += 1
+            continue
+
+        if limit is not None and attempted >= limit:
+            break
+
+        attempted += 1
+        summary.processed += 1
 
         mark_copying(job_dir, row["id"])
+        if row["kind"] == "symlink":
+            mark_result(
+                job_dir,
+                row["id"],
+                "skipped",
+                error="symlink skipped to avoid following external targets",
+            )
+            summary.skipped += 1
+            continue
+
         result = copy_one_with_timeout(source, dest, timeout)
         status = str(result["status"])
         if status == "copied":
@@ -58,7 +78,7 @@ def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = N
 
 def destination_matches(dest: Path, row: Any) -> bool:
     try:
-        info = dest.stat()
+        info = dest.lstat() if row["kind"] == "symlink" else dest.stat()
     except OSError:
         return False
     return info.st_size == row["size"] and info.st_mtime_ns == row["mtime_ns"]
@@ -67,16 +87,18 @@ def destination_matches(dest: Path, row: Any) -> bool:
 def copy_one_with_timeout(source: Path, dest: Path, timeout: float) -> dict[str, object]:
     ctx = multiprocessing.get_context("spawn")
     result_queue = ctx.Queue(maxsize=1)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    temp = make_temp_path(dest)
     process = ctx.Process(
         target=_copy_file_child,
-        args=(str(source), str(dest), result_queue),
+        args=(str(source), str(dest), str(temp), result_queue),
     )
     process.start()
     process.join(timeout)
     if process.is_alive():
         process.terminate()
         process.join()
-        cleanup_temp(dest)
+        cleanup_path(temp)
         return {"status": "timed_out", "error": f"copy timed out after {timeout:g} seconds"}
 
     try:
@@ -87,15 +109,17 @@ def copy_one_with_timeout(source: Path, dest: Path, timeout: float) -> dict[str,
         return {"status": "failed", "error": f"copy worker exited with code {process.exitcode}"}
 
 
-def _copy_file_child(source_text: str, dest_text: str, result_queue: multiprocessing.Queue) -> None:
+def _copy_file_child(
+    source_text: str,
+    dest_text: str,
+    temp_text: str,
+    result_queue: multiprocessing.Queue,
+) -> None:
     source = Path(source_text)
     dest = Path(dest_text)
-    temp = temp_path_for(dest)
+    temp = Path(temp_text)
     copied_bytes = 0
     try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if temp.exists() or temp.is_symlink():
-            temp.unlink()
         with source.open("rb") as src, temp.open("wb") as dst:
             while True:
                 chunk = src.read(CHUNK_SIZE)
@@ -111,16 +135,17 @@ def _copy_file_child(source_text: str, dest_text: str, result_queue: multiproces
         fsync_directory(dest.parent)
         result_queue.put({"status": "copied", "copied_bytes": copied_bytes})
     except BaseException as exc:
-        cleanup_temp(dest)
+        cleanup_path(temp)
         result_queue.put({"status": "failed", "error": f"{type(exc).__name__}: {exc}"})
 
 
-def temp_path_for(dest: Path) -> Path:
-    return dest.with_name(f".{dest.name}.rescue-tmp")
+def make_temp_path(dest: Path) -> Path:
+    fd, name = tempfile.mkstemp(prefix=f".{dest.name}.", suffix=".rescue-tmp", dir=dest.parent)
+    os.close(fd)
+    return Path(name)
 
 
-def cleanup_temp(dest: Path) -> None:
-    temp = temp_path_for(dest)
+def cleanup_path(temp: Path) -> None:
     try:
         if temp.exists() or temp.is_symlink():
             temp.unlink()
