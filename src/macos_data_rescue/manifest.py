@@ -217,12 +217,44 @@ def load_config(job_dir: Path) -> JobConfig:
     )
 
 
-def upsert_scanned_files(job_dir: Path, files: Iterable[ScannedFile], *, batch_size: int = 100) -> int:
+def scan_cursor_key(phase: str) -> str:
+    return f"scan_cursor:{phase}"
+
+
+def load_scan_cursor(job_dir: Path, phase: str) -> str | None:
+    conn = connect(job_dir)
+    try:
+        row = conn.execute(
+            "select value from config where key = ?",
+            (scan_cursor_key(phase),),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row["value"] if row else None
+
+
+def clear_scan_cursor(job_dir: Path, phase: str) -> None:
+    conn = connect(job_dir)
+    try:
+        conn.execute("delete from config where key = ?", (scan_cursor_key(phase),))
+        commit_scan_batch(conn)
+    finally:
+        conn.close()
+
+
+def upsert_scanned_files(
+    job_dir: Path,
+    files: Iterable[ScannedFile],
+    *,
+    batch_size: int = 100,
+    cursor_key: str | None = None,
+) -> int:
     if batch_size <= 0:
         raise ValueError("batch_size must be greater than zero")
     conn = connect(job_dir)
     count = 0
     pending = 0
+    batch_cursor: str | None = None
     try:
         for item in files:
             now = utc_now()
@@ -293,17 +325,24 @@ def upsert_scanned_files(job_dir: Path, files: Iterable[ScannedFile], *, batch_s
             )
             count += 1
             pending += 1
+            batch_cursor = item.relative_path
             if pending >= batch_size:
-                commit_scan_batch(conn)
+                commit_scan_batch(conn, cursor_key=cursor_key, cursor_value=batch_cursor)
                 pending = 0
+                batch_cursor = None
         if pending or count == 0:
-            commit_scan_batch(conn)
+            commit_scan_batch(conn, cursor_key=cursor_key, cursor_value=batch_cursor)
     finally:
         conn.close()
     return count
 
 
-def commit_scan_batch(conn: sqlite3.Connection) -> None:
+def commit_scan_batch(
+    conn: sqlite3.Connection,
+    *,
+    cursor_key: str | None = None,
+    cursor_value: str | None = None,
+) -> None:
     now = utc_now()
     conn.execute(
         """
@@ -312,6 +351,14 @@ def commit_scan_batch(conn: sqlite3.Connection) -> None:
         """,
         (now,),
     )
+    if cursor_key is not None and cursor_value is not None:
+        conn.execute(
+            """
+            insert into config(key, value) values(?, ?)
+            on conflict(key) do update set value = excluded.value
+            """,
+            (cursor_key, cursor_value),
+        )
     conn.commit()
 
 

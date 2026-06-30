@@ -8,7 +8,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import RescueError
-from .manifest import ScannedFile, load_config, migrate_manifest, upsert_scanned_files
+from .manifest import (
+    ScannedFile,
+    clear_scan_cursor,
+    load_config,
+    load_scan_cursor,
+    migrate_manifest,
+    scan_cursor_key,
+    upsert_scanned_files,
+)
 
 
 IMPORTANT_DIRS = {"Desktop", "Documents", "Downloads"}
@@ -120,23 +128,48 @@ def scan_job(
         raise RescueError(f"source does not exist: {config.source}")
     migrate_manifest(job_dir)
     limiter = ScanLimiter(limit=limit, timeout=timeout)
+    cursor = load_scan_cursor(job_dir, phase)
     count = upsert_scanned_files(
         job_dir,
-        limiter.wrap(iter_source_files(config.source, phase=phase)),
+        limiter.wrap(iter_source_files(config.source, phase=phase), skip_until_after=cursor),
         batch_size=batch_size,
+        cursor_key=scan_cursor_key(phase),
     )
+    if cursor is not None and not limiter.found_cursor and limiter.stopped is None:
+        limiter = ScanLimiter(limit=limit, deadline=limiter.deadline)
+        count = upsert_scanned_files(
+            job_dir,
+            limiter.wrap(iter_source_files(config.source, phase=phase)),
+            batch_size=batch_size,
+            cursor_key=scan_cursor_key(phase),
+        )
+    if limiter.stopped is None:
+        clear_scan_cursor(job_dir, phase)
     return ScanSummary(scanned=count, stopped=limiter.stopped)
 
 
 class ScanLimiter:
-    def __init__(self, *, limit: int | None, timeout: float | None) -> None:
+    def __init__(
+        self,
+        *,
+        limit: int | None,
+        timeout: float | None = None,
+        deadline: float | None = None,
+    ) -> None:
         self.limit = limit
-        self.deadline = time.monotonic() + timeout if timeout is not None else None
+        if deadline is not None:
+            self.deadline = deadline
+        elif timeout is not None:
+            self.deadline = time.monotonic() + timeout
+        else:
+            self.deadline = None
         self.scanned = 0
         self.stopped: str | None = None
+        self.found_cursor = True
 
-    def wrap(self, files):
+    def wrap(self, files, *, skip_until_after: str | None = None):
         iterator = iter(files)
+        self.found_cursor = skip_until_after is None
         while True:
             if self.limit is not None and self.scanned >= self.limit:
                 self.stopped = "limit"
@@ -148,6 +181,10 @@ class ScanLimiter:
                 item = next(iterator)
             except StopIteration:
                 return
+            if not self.found_cursor:
+                if item.relative_path == skip_until_after:
+                    self.found_cursor = True
+                continue
             yield item
             self.scanned += 1
 

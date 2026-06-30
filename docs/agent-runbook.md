@@ -88,7 +88,7 @@ uv run macos-data-rescue scan --job-dir "$JOB" --phase visible-home --timeout 30
 uv run macos-data-rescue copy --job-dir "$JOB" --phase visible-home --timeout 3600
 ```
 
-If scan reports `stopped=timeout` or `stopped=limit`, start copying the rows already committed, then run a later scan with more time or no limit when broader coverage is needed. Copy jobs can run for hours; the timeout is per file, not a whole-job timer.
+If scan reports `stopped=timeout` or `stopped=limit`, start copying the rows already committed, then repeat the same `scan --phase ...` later. The manifest stores a per-phase scan cursor, so the next scan continues after the last committed file for that phase until the phase reaches the end. Copy jobs can run for hours; the timeout is per file, not a whole-job timer.
 
 Then copy hidden home dotfiles/dotfolders. This is part of the default customer-home workflow because hidden home data can matter for ordinary users too:
 
@@ -160,7 +160,7 @@ Per-file statuses in `status` and reports are the real rescue outcome:
 - `skipped`: intentionally not copied, currently used for symlinks to avoid following external targets.
 Warnings are separate per-file report fields, not statuses. They are customer-visible notes such as suspected iCloud dataless placeholder or xattr preservation issue.
 
-Scan output may include `stopped=timeout` or `stopped=limit`. That is not a copy failure. It means the scan command intentionally stopped after committing a partial manifest; run `copy`/`resume`, then repeat scan if more coverage is needed.
+Scan output may include `stopped=timeout` or `stopped=limit`. That is not a copy failure. It means the scan command intentionally stopped after committing a partial manifest; run `copy`/`resume`, then repeat the same phase scan if more coverage is needed. Repeated scans of the same phase resume from the saved cursor and clear it after the phase completes.
 
 ## Warnings To Explain
 

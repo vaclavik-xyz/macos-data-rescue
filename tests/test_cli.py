@@ -55,6 +55,16 @@ def file_rows(job_dir: Path) -> dict[str, sqlite3.Row]:
     return {row["relative_path"]: row for row in rows}
 
 
+def config_value(job_dir: Path, key: str) -> str | None:
+    conn = sqlite3.connect(job_dir / "manifest.sqlite")
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute("select value from config where key = ?", (key,)).fetchone()
+    finally:
+        conn.close()
+    return row["value"] if row else None
+
+
 def test_pyproject_declares_console_script() -> None:
     data = tomllib.loads((ROOT / "pyproject.toml").read_text())
 
@@ -249,8 +259,155 @@ def test_scan_limit_creates_partial_manifest_that_can_be_copied(tmp_path: Path) 
     assert sorted(path.name for path in (dest_dir / "Desktop").iterdir()) == ["a.txt", "b.txt"]
 
 
+def test_limited_scan_resumes_from_persisted_phase_cursor(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    for name in ("a.txt", "b.txt", "c.txt"):
+        write_file(source / "Desktop" / name, name.encode())
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    first = run_cli("scan", "--job-dir", str(job_dir), "--phase", "important", "--limit", "2")
+    first_rows = file_rows(job_dir)
+    first_cursor = config_value(job_dir, "scan_cursor:important")
+    second = run_cli("scan", "--job-dir", str(job_dir), "--phase", "important", "--limit", "2")
+
+    rows = file_rows(job_dir)
+    assert "scanned=2" in first.stdout
+    assert "stopped=limit" in first.stdout
+    assert sorted(first_rows) == ["Desktop/a.txt", "Desktop/b.txt"]
+    assert first_cursor == "Desktop/b.txt"
+    assert "scanned=1" in second.stdout
+    assert "stopped=" not in second.stdout
+    assert sorted(rows) == [
+        "Desktop/a.txt",
+        "Desktop/b.txt",
+        "Desktop/c.txt",
+    ]
+    assert config_value(job_dir, "scan_cursor:important") is None
+
+
+def test_scan_restarts_when_persisted_cursor_file_disappears(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    for name in ("a.txt", "b.txt", "c.txt"):
+        write_file(source / "Desktop" / name, name.encode())
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "important", "--limit", "2")
+    (source / "Desktop" / "b.txt").unlink()
+
+    result = run_cli("scan", "--job-dir", str(job_dir), "--phase", "important", "--limit", "5")
+
+    rows = file_rows(job_dir)
+    assert "scanned=2" in result.stdout
+    assert "stopped=" not in result.stdout
+    assert sorted(rows) == [
+        "Desktop/a.txt",
+        "Desktop/b.txt",
+        "Desktop/c.txt",
+    ]
+    assert config_value(job_dir, "scan_cursor:important") is None
+
+
+def test_resumed_scan_timeout_checks_skipped_cursor_items(tmp_path: Path, monkeypatch) -> None:
+    from macos_data_rescue import scanner
+    from macos_data_rescue.manifest import ScannedFile
+
+    source = tmp_path / "source-home"
+    source.mkdir()
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    conn = sqlite3.connect(job_dir / "manifest.sqlite")
+    try:
+        conn.execute(
+            "insert into config(key, value) values(?, ?)",
+            ("scan_cursor:all", "cursor.txt"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    def slow_files(source_path: Path, *, phase: str):
+        for name in ("skip-1.txt", "skip-2.txt", "cursor.txt", "after.txt"):
+            time.sleep(0.02)
+            yield ScannedFile(
+                relative_path=name,
+                size=1,
+                mtime_ns=1,
+                mode=0o644,
+                kind="file",
+                phase=phase,
+            )
+
+    monkeypatch.setattr(scanner, "iter_source_files", slow_files)
+
+    summary = scanner.scan_job(job_dir, phase="all", timeout=0.03, batch_size=1)
+
+    assert summary.scanned == 0
+    assert summary.stopped == "timeout"
+    assert file_rows(job_dir) == {}
+    assert config_value(job_dir, "scan_cursor:all") == "cursor.txt"
+
+
+def test_stale_cursor_restart_keeps_original_scan_deadline(tmp_path: Path, monkeypatch) -> None:
+    from macos_data_rescue import scanner
+    from macos_data_rescue.manifest import ScannedFile
+
+    source = tmp_path / "source-home"
+    source.mkdir()
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    conn = sqlite3.connect(job_dir / "manifest.sqlite")
+    try:
+        conn.execute(
+            "insert into config(key, value) values(?, ?)",
+            ("scan_cursor:all", "missing.txt"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    monotonic_values = iter([100.0, 105.0, 109.0, 111.0, 112.0, 113.0])
+
+    def fake_monotonic() -> float:
+        return next(monotonic_values, 113.0)
+
+    calls = 0
+
+    def files(source_path: Path, *, phase: str):
+        nonlocal calls
+        calls += 1
+        name = "before.txt" if calls == 1 else "after.txt"
+        yield ScannedFile(
+            relative_path=name,
+            size=1,
+            mtime_ns=1,
+            mode=0o644,
+            kind="file",
+            phase=phase,
+        )
+
+    monkeypatch.setattr(scanner.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(scanner, "iter_source_files", files)
+
+    summary = scanner.scan_job(job_dir, phase="all", timeout=10, batch_size=1)
+
+    assert summary.scanned == 0
+    assert summary.stopped == "timeout"
+    assert file_rows(job_dir) == {}
+    assert config_value(job_dir, "scan_cursor:all") == "missing.txt"
+
+
 def test_scan_batches_are_committed_before_generator_finishes(tmp_path: Path) -> None:
-    from macos_data_rescue.manifest import ScannedFile, init_manifest, upsert_scanned_files
+    from macos_data_rescue.manifest import (
+        ScannedFile,
+        init_manifest,
+        scan_cursor_key,
+        upsert_scanned_files,
+    )
 
     source = tmp_path / "source-home"
     source.mkdir()
@@ -270,12 +427,18 @@ def test_scan_batches_are_committed_before_generator_finishes(tmp_path: Path) ->
         raise RuntimeError("scan interrupted")
 
     try:
-        upsert_scanned_files(job_dir, interrupted_files(), batch_size=2)
+        upsert_scanned_files(
+            job_dir,
+            interrupted_files(),
+            batch_size=2,
+            cursor_key=scan_cursor_key("all"),
+        )
     except RuntimeError:
         pass
 
     rows = file_rows(job_dir)
     assert sorted(rows) == ["a.txt", "b.txt"]
+    assert config_value(job_dir, "scan_cursor:all") == "b.txt"
 
 
 def test_scan_timeout_commits_partial_manifest(tmp_path: Path, monkeypatch) -> None:

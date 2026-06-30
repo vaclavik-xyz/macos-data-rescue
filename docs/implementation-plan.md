@@ -33,6 +33,7 @@ Statuses: `pending`, `copying`, `copied`, `failed`, `timed_out`, `skipped`.
 - Scan commits manifest rows in batches so partial work survives interruption after a committed batch.
 - `--timeout` stops cooperatively between files and prints `stopped=timeout`.
 - `--limit` stops after a bounded number of scanned files and prints `stopped=limit`.
+- A per-phase scan cursor is stored with committed batches, so repeating the same phase resumes after the last committed scanned file and clears the cursor after the phase completes.
 - Severe kernel/filesystem hangs inside one `os.walk` or `stat` call can still stall scan; escalate to imaging or a future hard scanner watchdog if that happens.
 
 ## Profiles/phases

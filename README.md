@@ -8,7 +8,7 @@ The goal is simple: **one bad file must not stop the whole rescue**. The tool sc
 
 - `init` creates a rescue job manifest.
 - `scan` records source files with phases and default excludes; `--phase`, `--timeout`, and `--limit` can rescue visible home data before slower Library/app/application choices.
-- Scan commits manifest rows in batches, so an interrupted or timeout-limited scan can leave useful rows ready for `copy`.
+- Scan commits manifest rows in batches and stores a per-phase cursor, so an interrupted or timeout/limit-bounded scan can leave useful rows ready for `copy` and the next scan of the same phase continues forward.
 - `copy` / `resume` copy file-by-file through an isolated worker process.
 - Per-file timeout marks stuck files as `timed_out` and continues.
 - Symlinks are skipped instead of followed, to avoid copying unrelated technician-host paths.
@@ -50,7 +50,7 @@ uv run macos-data-rescue scan --job-dir "$JOB" --phase visible-home --timeout 30
 uv run macos-data-rescue copy --job-dir "$JOB" --phase visible-home --timeout 3600
 ```
 
-If scan prints `stopped=timeout` or `stopped=limit`, the manifest still contains the rows committed so far. Start `copy` for that phase, then run a later scan with more time or no limit when you want broader coverage.
+If scan prints `stopped=timeout` or `stopped=limit`, the manifest still contains the rows committed so far. Start `copy` for that phase, then repeat the same `scan --phase ...` later; it resumes after the last committed scan cursor for that phase until the phase completes.
 
 Then automatically include hidden home dotfiles/dotfolders, with obvious cache ballast pruned:
 
@@ -113,7 +113,7 @@ Legacy phases remain available for existing jobs and older scripts:
 | `library` | selected `Library` data, excluding caches/logs |
 | `all` | all manifest rows for copy/resume; default scan keeps the original full-home behavior |
 
-Re-running `scan` for another phase upserts rows into the same manifest without deleting earlier phase results.
+Re-running `scan` for another phase upserts rows into the same manifest without deleting earlier phase results. Re-running the same phase after `stopped=timeout` or `stopped=limit` resumes after that phase's saved scan cursor; when the phase reaches the end, the cursor is cleared so future scans refresh from the beginning.
 
 `scan --timeout SECONDS` stops cooperatively between files and prints `stopped=timeout`. `scan --limit N` records at most `N` scan results for that run and prints `stopped=limit` when the run reached that cap. Both modes commit rows in batches, so `copy` can start from the partial manifest.
 
