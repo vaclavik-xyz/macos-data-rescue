@@ -329,6 +329,48 @@ def test_copy_after_important_scan_does_not_require_full_scan(tmp_path: Path) ->
     assert [item["relative_path"] for item in payload["files"]] == ["Desktop/invoice.txt"]
 
 
+def test_scan_phase_app_data_records_curated_library_without_cache_ballast(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Library" / "Mail" / "V10" / "mailbox", b"mail")
+    write_file(source / "Library" / "Messages" / "chat.db", b"messages")
+    write_file(source / "Library" / "Safari" / "Bookmarks.plist", b"bookmarks")
+    write_file(source / "Library" / "Keychains" / "login.keychain-db", b"keychain")
+    write_file(source / "Library" / "Application Support" / "Example" / "data.sqlite", b"data")
+    write_file(source / "Library" / "Application Support" / "Example" / "Caches" / "blob", b"cache")
+    write_file(source / "Library" / "Caches" / "cache.bin", b"cache")
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "app-data")
+
+    rows = file_rows(job_dir)
+    assert sorted(rows) == [
+        "Library/Application Support/Example/data.sqlite",
+        "Library/Keychains/login.keychain-db",
+        "Library/Mail/V10/mailbox",
+        "Library/Messages/chat.db",
+        "Library/Safari/Bookmarks.plist",
+    ]
+    assert {row["phase"] for row in rows.values()} == {"app-data"}
+
+
+def test_scan_phase_app_data_does_not_follow_symlinked_library_root(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    outside = tmp_path / "outside-library"
+    write_file(outside / "Mail" / "mailbox", b"outside")
+    source.mkdir()
+    os.symlink(outside, source / "Library")
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "app-data")
+
+    assert file_rows(job_dir) == {}
+
+
 def test_copy_copies_files_preserves_content_and_updates_status(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     write_file(source / "Desktop" / "invoice.txt", b"desktop")

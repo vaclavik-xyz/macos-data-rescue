@@ -11,9 +11,20 @@ from .manifest import ScannedFile, load_config, migrate_manifest, upsert_scanned
 
 IMPORTANT_DIRS = {"Desktop", "Documents", "Downloads"}
 PHOTO_DIRS = {"Pictures", "Movies", "Music"}
-CUSTOMER_PHASES = ("visible-home", "hidden-home")
+CUSTOMER_PHASES = ("visible-home", "hidden-home", "app-data")
 LEGACY_PHASES = ("important", "photos", "library", "all")
 SCAN_PHASES = CUSTOMER_PHASES + LEGACY_PHASES
+APP_DATA_LIBRARY_PREFIXES = (
+    ("Library", "Application Support"),
+    ("Library", "Calendars"),
+    ("Library", "Containers", "com.apple.Notes"),
+    ("Library", "Group Containers", "group.com.apple.notes"),
+    ("Library", "Keychains"),
+    ("Library", "Mail"),
+    ("Library", "Messages"),
+    ("Library", "MobileSync", "Backup"),
+    ("Library", "Safari"),
+)
 CUSTOMER_HOME_TOP_LEVEL_EXCLUDES = {
     "Cache",
     "Caches",
@@ -97,6 +108,9 @@ def iter_source_files(source: Path, *, phase: str = "all"):
 def scan_roots(source: Path, phase: str) -> tuple[Path, ...]:
     if phase in {"all", "visible-home", "hidden-home"}:
         return (source,)
+    if phase == "app-data":
+        library = source / "Library"
+        return (library,) if is_real_directory(library) else ()
     if phase == "important":
         names = IMPORTANT_DIRS
     elif phase == "photos":
@@ -174,6 +188,8 @@ def should_descend(parts: tuple[str, ...], phase: str) -> bool:
         return False
     if phase in CUSTOMER_PHASES and is_customer_home_ballast(parts):
         return False
+    if phase == "app-data":
+        return path_could_match_prefix(parts, APP_DATA_LIBRARY_PREFIXES)
     if phase == "visible-home":
         return is_visible_home_path(parts)
     if phase == "hidden-home":
@@ -188,6 +204,8 @@ def should_include_file(parts: tuple[str, ...], phase: str) -> bool:
         return False
     if phase in CUSTOMER_PHASES and is_customer_home_ballast(parts):
         return False
+    if phase == "app-data":
+        return is_app_data_path(parts)
     if phase == "visible-home":
         return is_visible_home_path(parts)
     if phase == "hidden-home":
@@ -218,6 +236,30 @@ def is_hidden_home_path(parts: tuple[str, ...]) -> bool:
     if not first.startswith(".") or first in HIDDEN_HOME_TOP_LEVEL_EXCLUDES:
         return False
     return not any(part in HIDDEN_HOME_EXCLUDE_PARTS for part in parts)
+
+
+def is_app_data_path(parts: tuple[str, ...]) -> bool:
+    if is_excluded(parts):
+        return False
+    return any(parts[: len(prefix)] == prefix for prefix in APP_DATA_LIBRARY_PREFIXES)
+
+
+def path_could_match_prefix(
+    parts: tuple[str, ...],
+    prefixes: tuple[tuple[str, ...], ...],
+) -> bool:
+    return any(
+        parts == prefix[: len(parts)] or parts[: len(prefix)] == prefix
+        for prefix in prefixes
+    )
+
+
+def is_real_directory(path: Path) -> bool:
+    try:
+        info = path.stat(follow_symlinks=False)
+    except OSError:
+        return False
+    return stat.S_ISDIR(info.st_mode)
 
 
 def manifest_phase_for(parts: tuple[str, ...], requested_phase: str) -> str:
