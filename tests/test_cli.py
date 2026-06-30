@@ -317,6 +317,23 @@ def test_temp_path_does_not_clobber_real_mirrored_file(tmp_path: Path) -> None:
     assert (dest_dir / "Desktop" / "foo").read_bytes() == b"main file"
 
 
+def test_copy_cleans_stale_internal_temp_without_removing_manifest_file(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / ".foo.rescue-tmp", b"real hidden file")
+    write_file(source / "Desktop" / "foo", b"main file")
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+    dest_desktop = dest_dir / "Desktop"
+    dest_desktop.mkdir(parents=True)
+    orphan_temp = dest_desktop / ".foo.crash.rescue-tmp"
+    orphan_temp.write_text("orphan")
+
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+
+    assert not orphan_temp.exists()
+    assert (dest_dir / "Desktop" / ".foo.rescue-tmp").read_bytes() == b"real hidden file"
+    assert (dest_dir / "Desktop" / "foo").read_bytes() == b"main file"
+
+
 def test_resume_limit_counts_files_that_need_work_not_skipped_matches(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     write_file(source / "Desktop" / "a.txt", b"a")
@@ -403,6 +420,30 @@ def test_report_outputs_markdown_and_json_summary(tmp_path: Path) -> None:
         "Desktop/denied.txt",
         "Desktop/invoice.txt",
     }
+
+
+def test_rescue_error_returns_one_but_argparse_usage_returns_two(tmp_path: Path) -> None:
+    missing_job = tmp_path / "missing-job"
+
+    job_error = run_cli("status", "--job-dir", str(missing_job), check=False)
+    usage_error = run_cli("copy", check=False)
+
+    assert job_error.returncode == 1
+    assert "manifest not found" in job_error.stderr
+    assert usage_error.returncode == 2
+    assert "usage:" in usage_error.stderr
+
+
+def test_copy_returns_zero_when_individual_files_fail(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "denied.txt", b"denied")
+    os.chmod(source / "Desktop" / "denied.txt", 0)
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+
+    result = run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2", check=False)
+
+    assert result.returncode == 0
+    assert "failed=1" in result.stdout
 
 
 def test_report_marks_specific_suspected_icloud_placeholder_file(tmp_path: Path) -> None:

@@ -12,6 +12,7 @@ The goal is simple: **one bad file must not stop the whole rescue**. The tool sc
 - Per-file timeout marks stuck files as `timed_out` and continues.
 - Symlinks are skipped instead of followed, to avoid copying unrelated technician-host paths.
 - Destination writes use unique temp files in the destination directory, then atomic `os.replace`.
+- `copy` / `resume` clean stale internal `*.rescue-tmp` files in relevant destination directories before copying.
 - `status` prints manifest counts.
 - `report` prints Markdown or JSON suitable for service notes, including per-file suspected iCloud placeholder warnings.
 
@@ -59,6 +60,14 @@ uv run macos-data-rescue status --job-dir "$JOB"
 uv run macos-data-rescue report --job-dir "$JOB" --format markdown > "$JOB/report.md"
 uv run macos-data-rescue report --job-dir "$JOB" --format json > "$JOB/report.json"
 ```
+
+## Exit codes
+
+| Code | Meaning |
+|---:|---|
+| `0` | Command completed. `copy` / `resume` still return `0` when individual files are `failed` or `timed_out`; check status/report for per-file results. |
+| `1` | Job/runtime error such as an unsafe path, missing manifest, unreadable job config, or unexpected runtime failure. |
+| `2` | CLI usage error from argparse, such as missing required options or invalid argument values. |
 
 ## Phases
 

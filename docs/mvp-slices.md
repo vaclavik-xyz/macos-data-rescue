@@ -8,11 +8,12 @@ This document tracks the MVP that was implemented and the next hardening slices.
 - `scan`: walk the mounted source home and classify files into phases.
 - `copy` / `resume`: copy one file at a time through a child process with per-file timeout.
 - Atomic destination writes through unique temp files in the destination directory.
+- Stale internal temp cleanup before `copy` / `resume`, without touching source data or manifest-tracked hidden files.
 - Symlink safety: symlinks are recorded and marked `skipped`, never followed.
 - Resume semantics for failed/timed-out/copying rows and copied rows whose destination disappeared.
 - `--limit` counts files that actually need work, not already-matching copied rows.
 - `status` and `report --format markdown|json`.
-- Regression test suite covering scan/excludes, copy, resume, timeout/failure continuation, symlink safety, temp collision, streamed manifest selection, source write guards, safe metadata copy, and limit starvation.
+- Regression test suite covering scan/excludes, copy, resume, timeout/failure continuation, symlink safety, temp cleanup/collision, streamed manifest selection, source write guards, safe metadata copy, exit codes, and limit starvation.
 - Reports include general warnings plus per-file suspected iCloud dataless placeholder markers in Markdown and JSON.
 
 ## Verification gates
@@ -38,7 +39,7 @@ uv run macos-data-rescue report --job-dir "$workdir/job" --format json
 ## Post-MVP hardening backlog
 
 1. Add macOS extended attributes/resource fork preservation via `ctypes`/libSystem instead of Python stdlib xattr APIs, which are not available on this macOS Python.
-2. Sweep stale `*.rescue-tmp` files at the start of `copy`/`resume`.
+2. Add destination free-space preflight with a conservative operator-facing warning before long copy runs.
 3. Add timeout-guarded or interrupt-friendly scanning for severely failing disks where `os.walk`/`stat` can hang before copy starts.
 4. Add an optional `--exclude-from` file for technician-maintained skip patterns.
 5. Add `--retry-failed/--no-retry-failed` policy controls.

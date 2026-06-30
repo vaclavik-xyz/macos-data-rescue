@@ -12,6 +12,7 @@ from .manifest import iter_selected_files, load_config, mark_copying, mark_resul
 
 
 CHUNK_SIZE = 1024 * 1024
+RESCUE_TMP_SUFFIX = ".rescue-tmp"
 WORK_STATUSES = ("pending", "copying", "failed", "timed_out")
 DONE_STATUSES = ("copied", "skipped")
 
@@ -34,6 +35,7 @@ class CopySummary:
 def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = None) -> CopySummary:
     config = load_config(job_dir)
     migrate_manifest(job_dir)
+    cleanup_stale_temps(job_dir, phase, config.dest)
     summary = CopySummary()
     attempted = 0
     handled_ids: set[int] = set()
@@ -167,9 +169,34 @@ def _copy_file_child(
 
 
 def make_temp_path(dest: Path) -> Path:
-    fd, name = tempfile.mkstemp(prefix=f".{dest.name}.", suffix=".rescue-tmp", dir=dest.parent)
+    fd, name = tempfile.mkstemp(prefix=f".{dest.name}.", suffix=RESCUE_TMP_SUFFIX, dir=dest.parent)
     os.close(fd)
     return Path(name)
+
+
+def cleanup_stale_temps(job_dir: Path, phase: str, dest_root: Path) -> None:
+    protected_names_by_dir: dict[Path, set[str]] = {}
+    for row in iter_selected_files(job_dir, phase):
+        dest = dest_root / row["relative_path"]
+        protected_names_by_dir.setdefault(dest.parent, set()).add(dest.name)
+
+    for directory, protected_names in protected_names_by_dir.items():
+        try:
+            entries = list(directory.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.name in protected_names:
+                continue
+            if is_internal_temp_name(entry.name):
+                cleanup_path(entry)
+
+
+def is_internal_temp_name(name: str) -> bool:
+    if not name.startswith(".") or not name.endswith(RESCUE_TMP_SUFFIX):
+        return False
+    prefix = name[: -len(RESCUE_TMP_SUFFIX)]
+    return "." in prefix[1:]
 
 
 def cleanup_path(temp: Path) -> None:

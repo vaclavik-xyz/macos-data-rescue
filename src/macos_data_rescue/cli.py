@@ -93,5 +93,8 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"unknown command: {args.command}")
     except RescueError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return 2
+        return 1
+    except Exception as exc:
+        print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
     return 0
