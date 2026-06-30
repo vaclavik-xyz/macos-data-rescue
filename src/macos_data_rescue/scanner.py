@@ -11,7 +11,7 @@ from .manifest import ScannedFile, load_config, migrate_manifest, upsert_scanned
 
 IMPORTANT_DIRS = {"Desktop", "Documents", "Downloads"}
 PHOTO_DIRS = {"Pictures", "Movies", "Music"}
-CUSTOMER_PHASES = ("visible-home", "hidden-home", "app-data")
+CUSTOMER_PHASES = ("visible-home", "hidden-home", "app-data", "full-home")
 LEGACY_PHASES = ("important", "photos", "library", "all")
 SCAN_PHASES = CUSTOMER_PHASES + LEGACY_PHASES
 APP_DATA_LIBRARY_PREFIXES = (
@@ -106,7 +106,7 @@ def iter_source_files(source: Path, *, phase: str = "all"):
 
 
 def scan_roots(source: Path, phase: str) -> tuple[Path, ...]:
-    if phase in {"all", "visible-home", "hidden-home"}:
+    if phase in {"all", "visible-home", "hidden-home", "full-home"}:
         return (source,)
     if phase == "app-data":
         library = source / "Library"

@@ -371,6 +371,48 @@ def test_scan_phase_app_data_does_not_follow_symlinked_library_root(tmp_path: Pa
     assert file_rows(job_dir) == {}
 
 
+def test_scan_phase_full_home_records_visible_hidden_and_library_with_full_home_phase(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    write_file(source / "Applications" / "UserOnly.app" / "Contents" / "Info.plist", b"app")
+    write_file(source / ".ssh" / "config", b"ssh")
+    write_file(source / "Library" / "Mail" / "mailbox", b"mail")
+    write_file(source / "Library" / "Caches" / "cache.bin", b"cache")
+    write_file(source / ".cache" / "browser" / "blob", b"cache")
+    write_file(source / ".npm" / "_cacache" / "blob", b"cache")
+    write_file(source / "tmp" / "scratch", b"tmp")
+    write_file(source / "Logs" / "debug.log", b"log")
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "full-home")
+
+    rows = file_rows(job_dir)
+    assert sorted(rows) == [
+        ".ssh/config",
+        "Applications/UserOnly.app/Contents/Info.plist",
+        "Desktop/invoice.txt",
+        "Library/Mail/mailbox",
+    ]
+    assert {row["phase"] for row in rows.values()} == {"full-home"}
+
+
+def test_scan_without_phase_keeps_legacy_all_classification(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    write_file(source / "Pictures" / "photo.jpg", b"jpeg")
+    write_file(source / "Library" / "Mail" / "mailbox", b"mail")
+    write_file(source / "Projects" / "notes.txt", b"notes")
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+
+    rows = file_rows(job_dir)
+    assert rows["Desktop/invoice.txt"]["phase"] == "important"
+    assert rows["Pictures/photo.jpg"]["phase"] == "photos"
+    assert rows["Library/Mail/mailbox"]["phase"] == "library"
+    assert rows["Projects/notes.txt"]["phase"] == "all"
+
+
 def test_copy_copies_files_preserves_content_and_updates_status(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     write_file(source / "Desktop" / "invoice.txt", b"desktop")

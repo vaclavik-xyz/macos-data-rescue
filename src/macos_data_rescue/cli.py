@@ -11,7 +11,16 @@ from .reporting import report, status_text
 from .scanner import scan_job
 
 
-PHASES = ("visible-home", "hidden-home", "app-data", "important", "photos", "library", "all")
+PHASES = (
+    "visible-home",
+    "hidden-home",
+    "app-data",
+    "full-home",
+    "important",
+    "photos",
+    "library",
+    "all",
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
