@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import ctypes
 import os
 import stat
 from pathlib import Path
 
 from .errors import RescueError
-from .manifest import ScannedFile, load_config, upsert_scanned_files
+from .manifest import ScannedFile, load_config, migrate_manifest, upsert_scanned_files
 
 
 IMPORTANT_DIRS = {"Desktop", "Documents", "Downloads"}
@@ -19,6 +20,19 @@ LIBRARY_EXCLUDE_PREFIXES = (
     ("Library", "Application Support", "Google", "Chrome", "Default", "Cache"),
 )
 LIBRARY_EXCLUDE_PARTS = {"Cache", "Caches", "tmp", "Temp"}
+ICLOUD_PATH_MARKERS = (
+    "Mobile Documents",
+    "CloudDocs",
+    "iCloud Drive",
+    "File Provider Storage",
+    "FileProvider",
+)
+ICLOUD_XATTR_MARKERS = ("icloud", "ubiquity", "clouddocs", "fileprovider", "dataless")
+ICLOUD_TINY_FILE_BYTES = 4096
+ICLOUD_PLACEHOLDER_WARNING = (
+    "suspected iCloud dataless placeholder: data may not have been physically "
+    "present on disk"
+)
 
 
 def scan_job(job_dir: Path) -> int:
@@ -27,6 +41,7 @@ def scan_job(job_dir: Path) -> int:
         raise RescueError(f"unsupported profile: {config.profile}")
     if not config.source.exists():
         raise RescueError(f"source does not exist: {config.source}")
+    migrate_manifest(job_dir)
     return upsert_scanned_files(job_dir, iter_source_files(config.source))
 
 
@@ -58,6 +73,7 @@ def iter_source_files(source: Path):
                 mode=stat.S_IMODE(info.st_mode),
                 kind=file_kind(info.st_mode),
                 phase=phase_for(rel_parts),
+                warning=warning_for(path, rel_parts, info),
             )
 
 
@@ -100,3 +116,65 @@ def file_kind(mode: int) -> str:
     if stat.S_ISFIFO(mode):
         return "fifo"
     return "other"
+
+
+def warning_for(path: Path, rel_parts: tuple[str, ...], info: os.stat_result) -> str | None:
+    if suspected_icloud_placeholder(path, rel_parts, info):
+        return ICLOUD_PLACEHOLDER_WARNING
+    return None
+
+
+def suspected_icloud_placeholder(
+    path: Path,
+    rel_parts: tuple[str, ...],
+    info: os.stat_result,
+) -> bool:
+    if not stat.S_ISREG(info.st_mode):
+        return False
+    xattr_names = list_xattr_names(path)
+    if any(has_icloud_marker(name) for name in xattr_names):
+        return True
+    rel_text = "/".join(rel_parts)
+    if has_icloud_marker(rel_text) and info.st_size <= ICLOUD_TINY_FILE_BYTES:
+        return True
+    return False
+
+
+def has_icloud_marker(value: str) -> bool:
+    lowered = value.lower()
+    return any(marker.lower() in lowered for marker in ICLOUD_PATH_MARKERS + ICLOUD_XATTR_MARKERS)
+
+
+def list_xattr_names(path: Path) -> tuple[str, ...]:
+    if hasattr(os, "listxattr"):
+        try:
+            return tuple(os.listxattr(path))
+        except OSError:
+            return ()
+    return list_xattr_names_libsystem(path)
+
+
+def list_xattr_names_libsystem(path: Path) -> tuple[str, ...]:
+    try:
+        libc = ctypes.CDLL("libSystem.dylib", use_errno=True)
+    except OSError:
+        return ()
+    try:
+        listxattr = libc.listxattr
+        listxattr.argtypes = (ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int)
+        listxattr.restype = ctypes.c_ssize_t
+        path_bytes = os.fsencode(path)
+        size = listxattr(path_bytes, None, 0, 0)
+        if size <= 0:
+            return ()
+        buffer = ctypes.create_string_buffer(size)
+        read = listxattr(path_bytes, buffer, size, 0)
+        if read <= 0:
+            return ()
+        return tuple(
+            name.decode(errors="replace")
+            for name in buffer.raw[:read].split(b"\0")
+            if name
+        )
+    except (AttributeError, OSError):
+        return ()

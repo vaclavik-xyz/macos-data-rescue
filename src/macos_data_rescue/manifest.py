@@ -28,6 +28,7 @@ class ScannedFile:
     mode: int
     kind: str
     phase: str
+    warning: str | None = None
 
 
 def utc_now() -> str:
@@ -49,6 +50,15 @@ def connect(job_dir: Path) -> sqlite3.Connection:
     return conn
 
 
+def migrate_manifest(job_dir: Path) -> None:
+    conn = connect(job_dir)
+    try:
+        create_schema(conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def create_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
@@ -68,6 +78,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             status text not null default 'pending',
             attempts integer not null default 0,
             error text,
+            warning text,
             copied_bytes integer not null default 0,
             scanned_at text not null,
             started_at text,
@@ -79,6 +90,13 @@ def create_schema(conn: sqlite3.Connection) -> None:
         create index if not exists idx_files_status on files(status);
         """
     )
+    ensure_column(conn, "files", "warning", "text")
+
+
+def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        conn.execute(f"alter table {table} add column {column} {definition}")
 
 
 def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobConfig:
@@ -174,9 +192,10 @@ def upsert_scanned_files(job_dir: Path, files: Iterable[ScannedFile]) -> int:
                 """
                 insert into files(
                     relative_path, size, mtime_ns, mode, kind, phase, status,
-                    attempts, error, copied_bytes, scanned_at, started_at, finished_at, updated_at
+                    attempts, error, warning, copied_bytes, scanned_at,
+                    started_at, finished_at, updated_at
                 )
-                values(?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+                values(?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(relative_path) do update set
                     size = excluded.size,
                     mtime_ns = excluded.mtime_ns,
@@ -185,6 +204,7 @@ def upsert_scanned_files(job_dir: Path, files: Iterable[ScannedFile]) -> int:
                     phase = excluded.phase,
                     status = ?,
                     error = ?,
+                    warning = excluded.warning,
                     copied_bytes = ?,
                     started_at = ?,
                     finished_at = ?,
@@ -200,6 +220,7 @@ def upsert_scanned_files(job_dir: Path, files: Iterable[ScannedFile]) -> int:
                     item.phase,
                     status,
                     error,
+                    item.warning,
                     copied_bytes,
                     now,
                     started_at,

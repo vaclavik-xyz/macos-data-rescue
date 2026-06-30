@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .manifest import all_files, load_config, status_summary
+from .manifest import all_files, load_config, migrate_manifest, status_summary
 
 
 STATUSES = ("pending", "copying", "copied", "failed", "timed_out", "skipped")
@@ -31,6 +31,8 @@ WARNINGS = (
 
 
 def status_text(job_dir: Path) -> str:
+    load_config(job_dir)
+    migrate_manifest(job_dir)
     summary = normalized_summary(job_dir)
     return " ".join(f"{status}={summary[status]['count']}" for status in STATUSES)
 
@@ -43,6 +45,7 @@ def report(job_dir: Path, report_format: str) -> str:
 
 def report_payload(job_dir: Path) -> dict[str, object]:
     config = load_config(job_dir)
+    migrate_manifest(job_dir)
     rows = all_files(job_dir)
     return {
         "job": {
@@ -87,8 +90,9 @@ def markdown_report(job_dir: Path) -> str:
         lines.append("No files scanned.")
     for item in files:
         error = f" - {item['error']}" if item["error"] else ""
+        warning = f" - WARNING: {item['warning']}" if item["warning"] else ""
         lines.append(
-            f"- `{item['relative_path']}` - {item['status']} - {item['size']} bytes{error}"
+            f"- `{item['relative_path']}` - {item['status']} - {item['size']} bytes{error}{warning}"
         )
     return "\n".join(lines) + "\n"
 
@@ -108,5 +112,6 @@ def row_to_dict(row) -> dict[str, object]:
         "status": row["status"],
         "attempts": row["attempts"],
         "error": row["error"],
+        "warning": row["warning"],
         "copied_bytes": row["copied_bytes"],
     }

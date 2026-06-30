@@ -125,6 +125,62 @@ def test_existing_manifest_revalidates_source_write_guards(tmp_path: Path) -> No
     assert "job-dir must not be inside source" in result.stderr
 
 
+def test_unsafe_legacy_manifest_is_not_migrated_before_source_guard(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    unsafe_job = source / ".rescue"
+    unsafe_job.mkdir()
+    conn = sqlite3.connect(unsafe_job / "manifest.sqlite")
+    try:
+        conn.executescript(
+            """
+            create table config (
+                key text primary key,
+                value text not null
+            );
+            create table files (
+                id integer primary key,
+                relative_path text not null unique,
+                size integer not null,
+                mtime_ns integer not null,
+                mode integer not null,
+                kind text not null,
+                phase text not null,
+                status text not null default 'pending',
+                attempts integer not null default 0,
+                error text,
+                copied_bytes integer not null default 0,
+                scanned_at text not null,
+                started_at text,
+                finished_at text,
+                updated_at text not null
+            );
+            """
+        )
+        conn.executemany(
+            "insert into config(key, value) values(?, ?)",
+            {
+                "source": str(source.resolve()),
+                "dest": str((tmp_path / "dest").resolve(strict=False)),
+                "profile": "customer-home",
+            }.items(),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = run_cli("scan", "--job-dir", str(unsafe_job), check=False)
+
+    conn = sqlite3.connect(unsafe_job / "manifest.sqlite")
+    try:
+        columns = {row[1] for row in conn.execute("pragma table_info(files)")}
+    finally:
+        conn.close()
+    assert result.returncode != 0
+    assert "job-dir must not be inside source" in result.stderr
+    assert "warning" not in columns
+
+
 def test_scan_creates_manifest_with_phases_and_excludes(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     write_file(source / "Desktop" / "invoice.txt", b"desktop")
@@ -347,3 +403,107 @@ def test_report_outputs_markdown_and_json_summary(tmp_path: Path) -> None:
         "Desktop/denied.txt",
         "Desktop/invoice.txt",
     }
+
+
+def test_report_marks_specific_suspected_icloud_placeholder_file(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    placeholder = (
+        source
+        / "Library"
+        / "Mobile Documents"
+        / "com~apple~CloudDocs"
+        / "Customer"
+        / "contract.pages"
+    )
+    write_file(placeholder, b"")
+
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+
+    markdown = run_cli("report", "--job-dir", str(job_dir), "--format", "markdown").stdout
+    payload = json.loads(run_cli("report", "--job-dir", str(job_dir), "--format", "json").stdout)
+
+    relative_path = "Library/Mobile Documents/com~apple~CloudDocs/Customer/contract.pages"
+    warning = (
+        "suspected iCloud dataless placeholder: data may not have been physically "
+        "present on disk"
+    )
+    assert relative_path in markdown
+    assert warning in markdown
+    [file_payload] = payload["files"]
+    assert file_payload["relative_path"] == relative_path
+    assert file_payload["warning"] == warning
+
+
+def test_symlink_warning_detection_does_not_read_target_xattrs(tmp_path: Path, monkeypatch) -> None:
+    from macos_data_rescue import scanner
+
+    source = tmp_path / "source-home"
+    write_file(source / "target.txt", b"target")
+    link = source / "Desktop" / "iCloud-link"
+    link.parent.mkdir(parents=True)
+    os.symlink(source / "target.txt", link)
+
+    def fail_if_called(path: Path) -> tuple[str, ...]:
+        raise AssertionError(f"must not read xattrs for symlink: {path}")
+
+    monkeypatch.setattr(scanner, "list_xattr_names", fail_if_called)
+
+    assert scanner.warning_for(link, ("Desktop", "iCloud-link"), link.stat(follow_symlinks=False)) is None
+
+
+def test_scan_migrates_existing_manifest_for_file_warnings(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    placeholder = (
+        source
+        / "Library"
+        / "Mobile Documents"
+        / "com~apple~CloudDocs"
+        / "Customer"
+        / "legacy.pages"
+    )
+    write_file(placeholder, b"")
+    job_dir = tmp_path / "job"
+    job_dir.mkdir()
+    conn = sqlite3.connect(job_dir / "manifest.sqlite")
+    try:
+        conn.executescript(
+            """
+            create table config (
+                key text primary key,
+                value text not null
+            );
+            create table files (
+                id integer primary key,
+                relative_path text not null unique,
+                size integer not null,
+                mtime_ns integer not null,
+                mode integer not null,
+                kind text not null,
+                phase text not null,
+                status text not null default 'pending',
+                attempts integer not null default 0,
+                error text,
+                copied_bytes integer not null default 0,
+                scanned_at text not null,
+                started_at text,
+                finished_at text,
+                updated_at text not null
+            );
+            """
+        )
+        conn.executemany(
+            "insert into config(key, value) values(?, ?)",
+            {
+                "source": str(source.resolve()),
+                "dest": str((tmp_path / "dest").resolve(strict=False)),
+                "profile": "customer-home",
+            }.items(),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    run_cli("scan", "--job-dir", str(job_dir))
+    payload = json.loads(run_cli("report", "--job-dir", str(job_dir), "--format", "json").stdout)
+
+    assert payload["files"][0]["warning"].startswith("suspected iCloud dataless placeholder")

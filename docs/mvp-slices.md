@@ -13,7 +13,7 @@ This document tracks the MVP that was implemented and the next hardening slices.
 - `--limit` counts files that actually need work, not already-matching copied rows.
 - `status` and `report --format markdown|json`.
 - Regression test suite covering scan/excludes, copy, resume, timeout/failure continuation, symlink safety, temp collision, streamed manifest selection, source write guards, safe metadata copy, and limit starvation.
-- Reports include warnings for iCloud dataless placeholders and the current unguarded scan limitation.
+- Reports include general warnings plus per-file suspected iCloud dataless placeholder markers in Markdown and JSON.
 
 ## Verification gates
 
@@ -38,10 +38,9 @@ uv run macos-data-rescue report --job-dir "$workdir/job" --format json
 ## Post-MVP hardening backlog
 
 1. Add macOS extended attributes/resource fork preservation via `ctypes`/libSystem instead of Python stdlib xattr APIs, which are not available on this macOS Python.
-2. Detect iCloud dataless/evicted placeholders per file and surface them in the manifest/report instead of only showing the general warning.
-3. Sweep stale `*.rescue-tmp` files at the start of `copy`/`resume`.
-4. Add timeout-guarded or interrupt-friendly scanning for severely failing disks where `os.walk`/`stat` can hang before copy starts.
-5. Add an optional `--exclude-from` file for technician-maintained skip patterns.
-6. Add `--retry-failed/--no-retry-failed` policy controls.
-7. Add CSV report output for CRM import if useful.
-8. Add an SSH orchestration wrapper for service Macs once the CLI stabilizes.
+2. Sweep stale `*.rescue-tmp` files at the start of `copy`/`resume`.
+3. Add timeout-guarded or interrupt-friendly scanning for severely failing disks where `os.walk`/`stat` can hang before copy starts.
+4. Add an optional `--exclude-from` file for technician-maintained skip patterns.
+5. Add `--retry-failed/--no-retry-failed` policy controls.
+6. Add CSV report output for CRM import if useful.
+7. Add an SSH orchestration wrapper for service Macs once the CLI stabilizes.

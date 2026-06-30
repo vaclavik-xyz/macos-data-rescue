@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .manifest import iter_selected_files, load_config, mark_copying, mark_result
+from .manifest import iter_selected_files, load_config, mark_copying, mark_result, migrate_manifest
 
 
 CHUNK_SIZE = 1024 * 1024
@@ -33,6 +33,7 @@ class CopySummary:
 
 def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = None) -> CopySummary:
     config = load_config(job_dir)
+    migrate_manifest(job_dir)
     summary = CopySummary()
     attempted = 0
     handled_ids: set[int] = set()
