@@ -132,10 +132,16 @@ def load_config(job_dir: Path) -> JobConfig:
     missing = {"source", "dest", "profile"} - values.keys()
     if missing:
         raise RescueError(f"manifest config missing: {', '.join(sorted(missing))}")
+    source = Path(values["source"]).resolve()
+    dest = Path(values["dest"]).resolve(strict=False)
+    job_resolved = job_dir.resolve(strict=False)
+    for label, candidate in (("job-dir", job_resolved), ("dest", dest)):
+        if is_same_or_inside(candidate, source):
+            raise RescueError(f"{label} must not be inside source: {candidate}")
     return JobConfig(
         job_dir=job_dir,
-        source=Path(values["source"]),
-        dest=Path(values["dest"]),
+        source=source,
+        dest=dest,
         profile=values["profile"],
     )
 

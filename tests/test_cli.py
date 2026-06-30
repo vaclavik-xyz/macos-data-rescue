@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -90,6 +91,37 @@ def test_init_rejects_job_or_dest_inside_source(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "must not be inside source" in result.stderr
     assert not dest_inside.exists()
+
+
+def test_existing_manifest_revalidates_source_write_guards(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    safe_job = tmp_path / "job"
+    run_cli("init", "--job-dir", str(safe_job), "--source", str(source), "--dest", str(tmp_path / "dest"))
+
+    conn = sqlite3.connect(safe_job / "manifest.sqlite")
+    try:
+        conn.execute("update config set value = ? where key = 'dest'", (str(source / "rescued-output"),))
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = run_cli("scan", "--job-dir", str(safe_job), check=False)
+    assert result.returncode != 0
+    assert "dest must not be inside source" in result.stderr
+
+    unsafe_job = source / ".rescue"
+    shutil.copytree(safe_job, unsafe_job)
+    conn = sqlite3.connect(unsafe_job / "manifest.sqlite")
+    try:
+        conn.execute("update config set value = ? where key = 'dest'", (str(tmp_path / "dest"),))
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = run_cli("scan", "--job-dir", str(unsafe_job), check=False)
+    assert result.returncode != 0
+    assert "job-dir must not be inside source" in result.stderr
 
 
 def test_scan_creates_manifest_with_phases_and_excludes(tmp_path: Path) -> None:
