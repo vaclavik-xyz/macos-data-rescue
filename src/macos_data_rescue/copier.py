@@ -118,9 +118,14 @@ def copy_one_with_timeout(source: Path, dest: Path, timeout: float) -> dict[str,
     process.start()
     process.join(timeout)
     if process.is_alive():
-        process.terminate()
-        process.join()
+        process.kill()
+        process.join(1)
         cleanup_path(temp)
+        if process.is_alive():
+            return {
+                "status": "timed_out",
+                "error": f"copy timed out after {timeout:g} seconds; worker did not exit after kill",
+            }
         return {"status": "timed_out", "error": f"copy timed out after {timeout:g} seconds"}
 
     try:
