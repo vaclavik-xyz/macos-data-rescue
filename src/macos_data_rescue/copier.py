@@ -3,7 +3,6 @@ from __future__ import annotations
 import multiprocessing
 import os
 import queue
-import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -156,7 +155,7 @@ def _copy_file_child(
                 copied_bytes += len(chunk)
             dst.flush()
             os.fsync(dst.fileno())
-        shutil.copystat(source, temp, follow_symlinks=True)
+        copy_basic_metadata(source, temp)
         copy_xattrs(source, temp)
         os.replace(temp, dest)
         fsync_directory(dest.parent)
@@ -178,6 +177,18 @@ def cleanup_path(temp: Path) -> None:
             temp.unlink()
     except OSError:
         pass
+
+
+def copy_basic_metadata(source: Path, dest: Path) -> None:
+    """Copy safe metadata without APFS/BSD flags or ownership.
+
+    shutil.copystat() can copy macOS flags such as UF_IMMUTABLE onto the
+    temporary destination file before os.replace(). An immutable temp can then
+    fail to publish with EPERM. For rescue we preserve mode and timestamps only.
+    """
+    info = source.stat(follow_symlinks=True)
+    os.chmod(dest, info.st_mode & 0o777)
+    os.utime(dest, ns=(info.st_atime_ns, info.st_mtime_ns), follow_symlinks=True)
 
 
 def copy_xattrs(source: Path, dest: Path) -> None:

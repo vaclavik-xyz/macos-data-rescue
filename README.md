@@ -75,9 +75,11 @@ Default excludes include `.Trash`, `Library/Caches`, `Library/Logs`, `node_modul
 
 ## Notes / limitations
 
-- Source data is never modified.
+- Source data is never modified, and `init` refuses a job directory or destination inside the source tree.
 - Empty directories are not recreated in the MVP.
-- macOS extended attributes are currently best-effort and may be skipped by Python stdlib on macOS.
+- macOS extended attributes/resource forks are not reliably preserved by the current Python stdlib path on this macOS; a native xattr backend is planned.
+- **iCloud / Optimize Mac Storage warning:** files offloaded by iCloud Drive or Photos may exist on the mounted disk only as dataless placeholders. Over Share Disk / Target Disk Mode they can copy as empty or tiny files and cannot be downloaded from the mounted volume. If the report shows suspicious 0-byte/tiny customer files, the customer must be told clearly that the data was not physically present on the disk image; recovery requires the live signed-in Mac or iCloud.com/export, not this mounted-volume rescue.
+- Per-file timeouts protect the copy phase. The scan phase still walks/stats the mounted source directly, so a severe disk/kernel I/O hang can still stall scan.
 - For true hardware/kernel I/O hangs, a killed child may not exit immediately; the parent records timeout and continues as far as the OS allows.
 - This is not a forensic imaging tool. It is a practical technician rescue copier for mounted, unlocked user data.
 

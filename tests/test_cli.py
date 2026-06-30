@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import stat
 import sqlite3
 import subprocess
 import sys
@@ -167,6 +168,24 @@ def test_copy_copies_files_preserves_content_and_updates_status(tmp_path: Path) 
     assert rows["Pictures/photo.jpg"]["status"] == "pending"
 
 
+def test_copy_does_not_make_destination_immutable_before_publish(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    immutable = source / "Desktop" / "locked.txt"
+    write_file(immutable, b"locked")
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+    os.chflags(immutable, stat.UF_IMMUTABLE)
+    try:
+        run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+    finally:
+        os.chflags(immutable, 0)
+
+    copied = dest_dir / "Desktop" / "locked.txt"
+    assert copied.read_bytes() == b"locked"
+    assert file_rows(job_dir)["Desktop/locked.txt"]["status"] == "copied"
+    if hasattr(os.stat(copied), "st_flags"):
+        assert not (os.stat(copied).st_flags & stat.UF_IMMUTABLE)
+
+
 def test_resume_skips_already_copied_files_with_matching_source_metadata(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     write_file(source / "Desktop" / "invoice.txt", b"desktop")
@@ -320,6 +339,8 @@ def test_report_outputs_markdown_and_json_summary(tmp_path: Path) -> None:
 
     assert "# macOS Data Rescue Report" in markdown
     assert "Desktop/invoice.txt" in markdown
+    assert "iCloud Optimize Mac Storage placeholders" in markdown
+    assert payload["warnings"][0]["code"] == "icloud_dataless_placeholders"
     assert payload["summary"]["copied"]["count"] == 1
     assert payload["summary"]["failed"]["count"] == 1
     assert {item["relative_path"] for item in payload["files"]} == {

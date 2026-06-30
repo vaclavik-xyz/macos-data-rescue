@@ -7,6 +7,27 @@ from .manifest import all_files, load_config, status_summary
 
 
 STATUSES = ("pending", "copying", "copied", "failed", "timed_out", "skipped")
+WARNINGS = (
+    {
+        "code": "icloud_dataless_placeholders",
+        "title": "iCloud Optimize Mac Storage placeholders",
+        "message": (
+            "Files offloaded by iCloud Drive or Photos Optimize Mac Storage may be "
+            "dataless placeholders on a mounted source volume. They can copy as "
+            "empty or tiny files and cannot be downloaded from Share Disk / Target "
+            "Disk Mode; verify suspicious zero-byte/tiny results with the customer."
+        ),
+    },
+    {
+        "code": "scan_not_timeout_guarded",
+        "title": "Scan is not timeout-guarded",
+        "message": (
+            "Per-file timeouts protect the copy phase. The scan phase still walks "
+            "and stats the mounted source directly, so a severe disk/kernel I/O "
+            "hang can still stall scan."
+        ),
+    },
+)
 
 
 def status_text(job_dir: Path) -> str:
@@ -31,6 +52,7 @@ def report_payload(job_dir: Path) -> dict[str, object]:
             "profile": config.profile,
         },
         "summary": normalized_summary(job_dir),
+        "warnings": list(WARNINGS),
         "files": [row_to_dict(row) for row in rows],
     }
 
@@ -53,6 +75,11 @@ def markdown_report(job_dir: Path) -> str:
     for status in STATUSES:
         item = summary[status]
         lines.append(f"| {status} | {item['count']} | {item['bytes']} |")
+    lines.extend(["", "## Important warnings", ""])
+    warnings = payload["warnings"]
+    assert isinstance(warnings, list)
+    for warning in warnings:
+        lines.append(f"- **{warning['title']}**: {warning['message']}")
     lines.extend(["", "## Files", ""])
     files = payload["files"]
     assert isinstance(files, list)
