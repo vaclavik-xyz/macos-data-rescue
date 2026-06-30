@@ -7,7 +7,7 @@ import queue
 import stat
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .manifest import iter_selected_files, load_config, mark_copying, mark_result, migrate_manifest
@@ -57,7 +57,15 @@ def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = N
     for row in iter_selected_files(job_dir, phase, statuses=DONE_STATUSES):
         if int(row["id"]) in handled_ids:
             continue
-        dest = config.dest / row["relative_path"]
+        try:
+            dest = resolve_relative_path(config.dest, row["relative_path"], kind=row["kind"])
+        except ValueError:
+            if limit is not None and attempted >= limit:
+                break
+            process_row(job_dir, config.source, config.dest, row, timeout, summary)
+            handled_ids.add(int(row["id"]))
+            attempted += 1
+            continue
         if row["status"] == "skipped" or destination_matches(dest, row):
             summary.skipped += 1
             continue
@@ -81,6 +89,7 @@ def process_row(
     summary.processed += 1
     mark_copying(job_dir, row["id"])
     try:
+        dest = resolve_relative_path(dest_root, row["relative_path"], kind=row["kind"])
         source = resolve_row_source(source_root, row)
     except ValueError as exc:
         mark_result(
@@ -93,7 +102,6 @@ def process_row(
         summary.failed += 1
         return
 
-    dest = dest_root / row["relative_path"]
     if row["kind"] == "symlink":
         mark_result(
             job_dir,
@@ -136,16 +144,48 @@ def process_row(
 def resolve_row_source(source_root: Path, row: Any) -> Path:
     source_path = row["source_path"] if "source_path" in row.keys() else None
     if not source_path:
-        return source_root / row["relative_path"]
+        return resolve_relative_path(source_root, row["relative_path"], kind=row["kind"])
     if row["phase"] != "applications":
         raise ValueError("manifest source_path is only allowed for applications phase")
 
     source = Path(source_path)
-    candidate = containment_path(source, row["kind"])
+    candidate = safe_containment_path(source, row["kind"], label=str(source_path))
     roots = application_source_roots_for_home(source_root)
     if not any(is_same_or_inside(candidate, root) for root in roots):
         raise ValueError(f"manifest source_path outside allowed application roots: {source_path}")
     return source
+
+
+def resolve_relative_path(root: Path, relative_path: object, *, kind: object) -> Path:
+    parts = safe_relative_parts(relative_path)
+    path = root.joinpath(*parts)
+    candidate = safe_containment_path(path, kind, label=str(relative_path))
+    root_resolved = safe_resolve(root, label=str(relative_path))
+    if not is_same_or_inside(candidate, root_resolved):
+        raise ValueError(f"unsafe manifest relative_path outside root: {relative_path}")
+    return path
+
+
+def safe_relative_parts(relative_path: object) -> tuple[str, ...]:
+    rel = PurePosixPath(str(relative_path))
+    parts = rel.parts
+    if rel.is_absolute() or not parts or any(part in {"", ".", ".."} for part in parts):
+        raise ValueError(f"unsafe manifest relative_path: {relative_path}")
+    return parts
+
+
+def safe_containment_path(path: Path, kind: object, *, label: str) -> Path:
+    try:
+        return containment_path(path, kind)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(f"unsafe manifest relative_path cannot be resolved: {label}") from exc
+
+
+def safe_resolve(path: Path, *, label: str) -> Path:
+    try:
+        return path.resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(f"unsafe manifest relative_path cannot be resolved: {label}") from exc
 
 
 def containment_path(path: Path, kind: object) -> Path:
@@ -160,7 +200,10 @@ def application_source_roots_for_home(source_root: Path) -> tuple[Path, ...]:
     user_applications = source_root / "Applications"
     for root in (volume_applications, user_applications):
         if is_real_directory(root):
-            roots.append(root.resolve(strict=False))
+            try:
+                roots.append(root.resolve(strict=False))
+            except (OSError, RuntimeError):
+                continue
     return tuple(roots)
 
 
@@ -197,8 +240,11 @@ def destination_matches(dest: Path, row: Any) -> bool:
 def copy_one_with_timeout(source: Path, dest: Path, timeout: float, *, expected_size: int) -> dict[str, object]:
     ctx = multiprocessing.get_context("spawn")
     result_queue = ctx.Queue(maxsize=1)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    temp = make_temp_path(dest)
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        temp = make_temp_path(dest)
+    except OSError as exc:
+        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}", "copied_bytes": 0}
     process = ctx.Process(
         target=_copy_file_child,
         args=(str(source), str(dest), str(temp), expected_size, result_queue),
@@ -277,7 +323,10 @@ def make_temp_path(dest: Path) -> Path:
 def cleanup_stale_temps(job_dir: Path, phase: str, dest_root: Path) -> None:
     protected_names_by_dir: dict[Path, set[str]] = {}
     for row in iter_selected_files(job_dir, phase):
-        dest = dest_root / row["relative_path"]
+        try:
+            dest = resolve_relative_path(dest_root, row["relative_path"], kind=row["kind"])
+        except ValueError:
+            continue
         protected_names_by_dir.setdefault(dest.parent, set()).add(dest.name)
 
     for directory, protected_names in protected_names_by_dir.items():

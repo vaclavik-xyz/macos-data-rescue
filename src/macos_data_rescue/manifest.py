@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Iterable
 
 from .errors import RescueError
@@ -56,6 +56,7 @@ def migrate_manifest(job_dir: Path) -> None:
     conn = connect(job_dir)
     try:
         create_schema(conn)
+        backfill_application_source_paths(conn)
         conn.commit()
     finally:
         conn.close()
@@ -101,6 +102,54 @@ def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition:
     columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
     if column not in columns:
         conn.execute(f"alter table {table} add column {column} {definition}")
+
+
+def backfill_application_source_paths(conn: sqlite3.Connection) -> None:
+    config = {row["key"]: row["value"] for row in conn.execute("select key, value from config")}
+    source_text = config.get("source")
+    if not source_text:
+        return
+    source = Path(source_text)
+    rows = conn.execute(
+        """
+        select id, relative_path
+        from files
+        where phase = 'applications'
+          and (source_path is null or source_path = '')
+        """
+    ).fetchall()
+    for row in rows:
+        source_path = application_source_path_for_relative(source, row["relative_path"])
+        if source_path is None:
+            continue
+        conn.execute(
+            "update files set source_path = ? where id = ?",
+            (str(source_path), row["id"]),
+        )
+
+
+def application_source_path_for_relative(source: Path, relative_path: str) -> Path | None:
+    rel = PurePosixPath(relative_path)
+    if rel.is_absolute():
+        return None
+    parts = rel.parts
+    if len(parts) < 2 or any(part in {"", ".", ".."} for part in parts):
+        return None
+    if parts[0] == "Volume Applications":
+        return volume_root_for_home(source).joinpath("Applications", *parts[1:])
+    if parts[0] == "Home Applications":
+        return source.joinpath("Applications", *parts[1:])
+    return None
+
+
+def volume_root_for_home(source: Path) -> Path:
+    parts = source.parts
+    users_indexes = [index for index, part in enumerate(parts) if part == "Users"]
+    if users_indexes:
+        users_index = users_indexes[-1]
+        if users_index > 0 and users_index + 1 < len(parts):
+            return Path(*parts[:users_index])
+    return source.parent
 
 
 def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobConfig:

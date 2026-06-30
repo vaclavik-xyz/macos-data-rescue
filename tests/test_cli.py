@@ -565,10 +565,42 @@ def test_copy_rejects_manifest_source_path_under_symlinked_user_applications(tmp
     assert "outside allowed application roots" in row["error"]
 
 
-def test_manifest_migration_adds_source_path_for_application_rows(tmp_path: Path) -> None:
-    source = tmp_path / "source-home"
-    source.mkdir()
+def test_copy_rejects_manifest_relative_path_outside_destination(tmp_path: Path) -> None:
+    volume = tmp_path / "Mounted Air"
+    source = volume / "Users" / "dan"
+    app_file = volume / "Applications" / "Legacy.app" / "Contents" / "Info.plist"
+    outside = tmp_path / "outside-publish.txt"
+    write_file(app_file, b"volume app")
+    write_file(outside, b"original")
+    source.mkdir(parents=True)
     job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
+    conn = sqlite3.connect(job_dir / "manifest.sqlite")
+    try:
+        conn.execute("update files set relative_path = ?", (str(outside),))
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = run_cli("copy", "--job-dir", str(job_dir), "--phase", "applications", "--timeout", "2")
+    row = file_rows(job_dir)[str(outside)]
+
+    assert "failed=1" in result.stdout
+    assert row["status"] == "failed"
+    assert "unsafe manifest relative_path" in row["error"]
+    assert outside.read_bytes() == b"original"
+
+
+def test_manifest_migration_adds_source_path_for_application_rows(tmp_path: Path) -> None:
+    volume = tmp_path / "Mounted Air"
+    source = volume / "Users" / "dan"
+    app_file = volume / "Applications" / "Legacy.app" / "Contents" / "Info.plist"
+    write_file(app_file, b"volume app")
+    source.mkdir(parents=True)
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
     job_dir.mkdir()
     conn = sqlite3.connect(job_dir / "manifest.sqlite")
     try:
@@ -602,7 +634,7 @@ def test_manifest_migration_adds_source_path_for_application_rows(tmp_path: Path
             "insert into config(key, value) values(?, ?)",
             {
                 "source": str(source.resolve()),
-                "dest": str((tmp_path / "dest").resolve(strict=False)),
+                "dest": str(dest_dir.resolve(strict=False)),
                 "profile": "customer-home",
             }.items(),
         )
@@ -612,7 +644,7 @@ def test_manifest_migration_adds_source_path_for_application_rows(tmp_path: Path
                 relative_path, size, mtime_ns, mode, kind, phase, status,
                 warning, copied_bytes, scanned_at, updated_at
             )
-            values('Volume Applications/Legacy.app/Contents/Info.plist', 0, 0, 33188,
+            values('Volume Applications/Legacy.app/Contents/Info.plist', 10, 0, 33188,
                    'file', 'applications', 'pending', null, 0, '2026-01-01T00:00:00+00:00',
                    '2026-01-01T00:00:00+00:00')
             """
@@ -624,11 +656,18 @@ def test_manifest_migration_adds_source_path_for_application_rows(tmp_path: Path
     run_cli("status", "--job-dir", str(job_dir))
 
     conn = sqlite3.connect(job_dir / "manifest.sqlite")
+    conn.row_factory = sqlite3.Row
     try:
         columns = {row[1] for row in conn.execute("pragma table_info(files)")}
+        row = conn.execute("select * from files").fetchone()
     finally:
         conn.close()
     assert "source_path" in columns
+    assert row["source_path"] == str(app_file)
+
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "applications", "--timeout", "2")
+
+    assert (dest_dir / "Volume Applications" / "Legacy.app" / "Contents" / "Info.plist").read_bytes() == b"volume app"
 
 
 def test_copy_copies_files_preserves_content_and_updates_status(tmp_path: Path) -> None:
@@ -880,6 +919,48 @@ def test_timeout_and_failure_mark_file_and_continue_to_next_file(tmp_path: Path)
     assert (dest_dir / "Desktop" / "ccc-after.txt").read_bytes() == b"after"
 
 
+def test_destination_setup_failure_marks_file_and_continues_to_next_file(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "a" / "nested.txt", b"nested")
+    write_file(source / "Desktop" / "z.txt", b"after")
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+    blocker = dest_dir / "Desktop" / "a"
+    blocker.parent.mkdir(parents=True)
+    blocker.write_bytes(b"not a directory")
+
+    result = run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+
+    rows = file_rows(job_dir)
+    assert result.returncode == 0
+    assert "failed=1" in result.stdout
+    assert "copied=1" in result.stdout
+    assert rows["Desktop/a/nested.txt"]["status"] == "failed"
+    assert "FileExistsError" in rows["Desktop/a/nested.txt"]["error"]
+    assert rows["Desktop/z.txt"]["status"] == "copied"
+    assert (dest_dir / "Desktop" / "z.txt").read_bytes() == b"after"
+
+
+def test_destination_symlink_loop_marks_file_failed_and_continues(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "a" / "nested.txt", b"nested")
+    write_file(source / "Desktop" / "z.txt", b"after")
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+    loop = dest_dir / "Desktop" / "a"
+    loop.parent.mkdir(parents=True)
+    os.symlink(loop, loop)
+
+    result = run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+
+    rows = file_rows(job_dir)
+    assert result.returncode == 0
+    assert "failed=1" in result.stdout
+    assert "copied=1" in result.stdout
+    assert rows["Desktop/a/nested.txt"]["status"] == "failed"
+    assert "unsafe manifest relative_path cannot be resolved" in rows["Desktop/a/nested.txt"]["error"]
+    assert rows["Desktop/z.txt"]["status"] == "copied"
+    assert (dest_dir / "Desktop" / "z.txt").read_bytes() == b"after"
+
+
 def test_copy_skips_symlink_without_copying_target_content(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     outside = tmp_path / "outside-secret.txt"
@@ -1037,6 +1118,28 @@ def test_copy_returns_zero_when_individual_files_fail(tmp_path: Path) -> None:
 
     assert result.returncode == 0
     assert "failed=1" in result.stdout
+
+
+def test_copy_rejects_non_finite_timeout_as_usage_error(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+
+    for value in ("nan", "inf"):
+        result = run_cli(
+            "copy",
+            "--job-dir",
+            str(job_dir),
+            "--phase",
+            "important",
+            "--timeout",
+            value,
+            check=False,
+        )
+
+        assert result.returncode == 2
+        assert "finite number greater than zero" in result.stderr
+        assert not (dest_dir / "Desktop" / "invoice.txt").exists()
 
 
 def test_report_marks_specific_suspected_icloud_placeholder_file(tmp_path: Path) -> None:
