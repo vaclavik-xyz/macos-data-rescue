@@ -1,0 +1,153 @@
+import json
+import os
+import sqlite3
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def run_cli(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    src_path = str(ROOT / "src")
+    env["PYTHONPATH"] = src_path + os.pathsep + env.get("PYTHONPATH", "")
+    result = subprocess.run(
+        [sys.executable, "-m", "macos_data_rescue", *args],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    if check:
+        assert result.returncode == 0, result.stdout + result.stderr
+    return result
+
+
+def write_file(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+
+
+def init_and_scan(tmp_path: Path, source: Path | None = None) -> tuple[Path, Path, Path]:
+    job_dir = tmp_path / "job"
+    source_dir = source or tmp_path / "source-home"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source_dir), "--dest", str(dest_dir))
+    run_cli("scan", "--job-dir", str(job_dir))
+    return job_dir, source_dir, dest_dir
+
+
+def file_rows(job_dir: Path) -> dict[str, sqlite3.Row]:
+    conn = sqlite3.connect(job_dir / "manifest.sqlite")
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute("select * from files order by relative_path").fetchall()
+    finally:
+        conn.close()
+    return {row["relative_path"]: row for row in rows}
+
+
+def test_pyproject_declares_console_script() -> None:
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text())
+
+    assert data["project"]["scripts"]["macos-data-rescue"] == "macos_data_rescue.cli:main"
+
+
+def test_scan_creates_manifest_with_phases_and_excludes(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    write_file(source / "Pictures" / "photo.jpg", b"jpeg")
+    write_file(source / "Library" / "Application Support" / "Example" / "prefs.plist", b"prefs")
+    write_file(source / "Projects" / "notes.txt", b"notes")
+    write_file(source / "Library" / "Caches" / "cache.bin", b"cache")
+    write_file(source / "node_modules" / "pkg" / "index.js", b"module")
+    write_file(source / ".Trash" / "old.txt", b"trash")
+
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+
+    rows = file_rows(job_dir)
+    assert rows["Desktop/invoice.txt"]["phase"] == "important"
+    assert rows["Pictures/photo.jpg"]["phase"] == "photos"
+    assert rows["Library/Application Support/Example/prefs.plist"]["phase"] == "library"
+    assert rows["Projects/notes.txt"]["phase"] == "all"
+    assert rows["Desktop/invoice.txt"]["status"] == "pending"
+    assert "Library/Caches/cache.bin" not in rows
+    assert "node_modules/pkg/index.js" not in rows
+    assert ".Trash/old.txt" not in rows
+
+
+def test_copy_copies_files_preserves_content_and_updates_status(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    write_file(source / "Documents" / "nested" / "contract.txt", b"contract")
+    write_file(source / "Pictures" / "photo.jpg", b"jpeg")
+    os.chmod(source / "Desktop" / "invoice.txt", 0o640)
+
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+
+    assert (dest_dir / "Desktop" / "invoice.txt").read_bytes() == b"desktop"
+    assert (dest_dir / "Documents" / "nested" / "contract.txt").read_bytes() == b"contract"
+    assert not (dest_dir / "Pictures" / "photo.jpg").exists()
+    assert oct((dest_dir / "Desktop" / "invoice.txt").stat().st_mode & 0o777) == "0o640"
+    rows = file_rows(job_dir)
+    assert rows["Desktop/invoice.txt"]["status"] == "copied"
+    assert rows["Documents/nested/contract.txt"]["status"] == "copied"
+    assert rows["Pictures/photo.jpg"]["status"] == "pending"
+
+
+def test_resume_skips_already_copied_files_with_matching_source_metadata(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+    before = file_rows(job_dir)["Desktop/invoice.txt"]
+
+    result = run_cli("resume", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+
+    after = file_rows(job_dir)["Desktop/invoice.txt"]
+    assert (dest_dir / "Desktop" / "invoice.txt").read_bytes() == b"desktop"
+    assert after["status"] == "copied"
+    assert after["attempts"] == before["attempts"]
+    assert "skipped=1" in result.stdout
+
+
+def test_timeout_and_failure_mark_file_and_continue_to_next_file(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    (source / "Desktop").mkdir(parents=True)
+    os.mkfifo(source / "Desktop" / "aaa-stuck")
+    os.symlink("missing-target", source / "Desktop" / "bbb-broken")
+    write_file(source / "Desktop" / "ccc-after.txt", b"after")
+
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "0.2")
+
+    rows = file_rows(job_dir)
+    assert rows["Desktop/aaa-stuck"]["status"] == "timed_out"
+    assert rows["Desktop/bbb-broken"]["status"] == "failed"
+    assert rows["Desktop/ccc-after.txt"]["status"] == "copied"
+    assert (dest_dir / "Desktop" / "ccc-after.txt").read_bytes() == b"after"
+
+
+def test_report_outputs_markdown_and_json_summary(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    os.symlink("missing-target", source / "Desktop" / "broken")
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+
+    markdown = run_cli("report", "--job-dir", str(job_dir), "--format", "markdown").stdout
+    payload = json.loads(run_cli("report", "--job-dir", str(job_dir), "--format", "json").stdout)
+
+    assert "# macOS Data Rescue Report" in markdown
+    assert "Desktop/invoice.txt" in markdown
+    assert payload["summary"]["copied"]["count"] == 1
+    assert payload["summary"]["failed"]["count"] == 1
+    assert {item["relative_path"] for item in payload["files"]} == {
+        "Desktop/broken",
+        "Desktop/invoice.txt",
+    }

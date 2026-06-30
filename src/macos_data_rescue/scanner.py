@@ -1,0 +1,102 @@
+from __future__ import annotations
+
+import os
+import stat
+from pathlib import Path
+
+from .errors import RescueError
+from .manifest import ScannedFile, load_config, upsert_scanned_files
+
+
+IMPORTANT_DIRS = {"Desktop", "Documents", "Downloads"}
+PHOTO_DIRS = {"Pictures", "Movies", "Music"}
+TOP_LEVEL_EXCLUDES = {".Trash", ".Spotlight-V100", ".fseventsd", "node_modules"}
+EXCLUDED_PARTS = {"node_modules", "__pycache__"}
+LIBRARY_EXCLUDE_PREFIXES = (
+    ("Library", "Caches"),
+    ("Library", "Logs"),
+    ("Library", "Containers", "com.apple.Safari", "Data", "Library", "Caches"),
+    ("Library", "Application Support", "Google", "Chrome", "Default", "Cache"),
+)
+LIBRARY_EXCLUDE_PARTS = {"Cache", "Caches", "tmp", "Temp"}
+
+
+def scan_job(job_dir: Path) -> int:
+    config = load_config(job_dir)
+    if config.profile != "customer-home":
+        raise RescueError(f"unsupported profile: {config.profile}")
+    if not config.source.exists():
+        raise RescueError(f"source does not exist: {config.source}")
+    return upsert_scanned_files(job_dir, iter_source_files(config.source))
+
+
+def iter_source_files(source: Path):
+    for root, dirs, files in os.walk(source, topdown=True, followlinks=False):
+        root_path = Path(root)
+        dirs.sort()
+        files.sort()
+        kept_dirs = []
+        for dirname in dirs:
+            rel_parts = relative_parts(source, root_path / dirname)
+            if not is_excluded(rel_parts):
+                kept_dirs.append(dirname)
+        dirs[:] = kept_dirs
+
+        for filename in files:
+            path = root_path / filename
+            rel_parts = relative_parts(source, path)
+            if is_excluded(rel_parts):
+                continue
+            try:
+                info = path.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            yield ScannedFile(
+                relative_path="/".join(rel_parts),
+                size=info.st_size,
+                mtime_ns=info.st_mtime_ns,
+                mode=stat.S_IMODE(info.st_mode),
+                kind=file_kind(info.st_mode),
+                phase=phase_for(rel_parts),
+            )
+
+
+def relative_parts(source: Path, path: Path) -> tuple[str, ...]:
+    return path.relative_to(source).parts
+
+
+def is_excluded(parts: tuple[str, ...]) -> bool:
+    if not parts:
+        return False
+    if parts[0] in TOP_LEVEL_EXCLUDES:
+        return True
+    if any(part in EXCLUDED_PARTS for part in parts):
+        return True
+    for prefix in LIBRARY_EXCLUDE_PREFIXES:
+        if parts[: len(prefix)] == prefix:
+            return True
+    if parts[0] == "Library" and any(part in LIBRARY_EXCLUDE_PARTS for part in parts[1:]):
+        return True
+    return False
+
+
+def phase_for(parts: tuple[str, ...]) -> str:
+    if not parts:
+        return "all"
+    if parts[0] in IMPORTANT_DIRS:
+        return "important"
+    if parts[0] in PHOTO_DIRS:
+        return "photos"
+    if parts[0] == "Library":
+        return "library"
+    return "all"
+
+
+def file_kind(mode: int) -> str:
+    if stat.S_ISREG(mode):
+        return "file"
+    if stat.S_ISLNK(mode):
+        return "symlink"
+    if stat.S_ISFIFO(mode):
+        return "fifo"
+    return "other"

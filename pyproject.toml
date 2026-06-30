@@ -1,0 +1,21 @@
+[project]
+name = "macos-data-rescue"
+version = "0.1.0"
+description = "Private macOS technician CLI for resumable user data rescue."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+macos-data-rescue = "macos_data_rescue.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
