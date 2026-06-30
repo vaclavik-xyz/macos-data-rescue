@@ -191,6 +191,21 @@ def test_resume_limit_counts_files_that_need_work_not_skipped_matches(tmp_path: 
     assert rows["Desktop/c.txt"]["status"] == "pending"
 
 
+def test_resume_limit_reaches_copied_file_with_missing_destination(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "a.txt", b"a")
+    write_file(source / "Desktop" / "b.txt", b"b")
+
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+    (dest_dir / "Desktop" / "b.txt").unlink()
+
+    run_cli("resume", "--job-dir", str(job_dir), "--phase", "important", "--limit", "1")
+
+    assert (dest_dir / "Desktop" / "a.txt").read_bytes() == b"a"
+    assert (dest_dir / "Desktop" / "b.txt").read_bytes() == b"b"
+
+
 def test_manifest_selected_files_are_streamed(tmp_path: Path) -> None:
     from macos_data_rescue.manifest import iter_selected_files
 

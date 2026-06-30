@@ -47,16 +47,12 @@ def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = N
     if limit is not None and attempted >= limit:
         return summary
 
-    done_seen = 0
     for row in iter_selected_files(job_dir, phase, statuses=DONE_STATUSES):
         if int(row["id"]) in handled_ids:
             continue
         dest = config.dest / row["relative_path"]
         if row["status"] == "skipped" or destination_matches(dest, row):
             summary.skipped += 1
-            done_seen += 1
-            if limit is not None and attempted + done_seen >= limit:
-                break
             continue
         if limit is not None and attempted >= limit:
             break
