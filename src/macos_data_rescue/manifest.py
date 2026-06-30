@@ -84,6 +84,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
 def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobConfig:
     if not source.exists() or not source.is_dir():
         raise RescueError(f"source must be an existing directory: {source}")
+    source_resolved = source.resolve()
+    job_resolved = job_dir.resolve(strict=False)
+    dest_resolved = dest.resolve(strict=False)
+    for label, candidate in (("job-dir", job_resolved), ("dest", dest_resolved)):
+        if is_same_or_inside(candidate, source_resolved):
+            raise RescueError(f"{label} must not be inside source: {candidate}")
     job_dir.mkdir(parents=True, exist_ok=True)
     db_path = manifest_path(job_dir)
     conn = sqlite3.connect(db_path)
@@ -93,8 +99,8 @@ def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobC
         create_schema(conn)
         now = utc_now()
         values = {
-            "source": str(source.resolve()),
-            "dest": str(dest.resolve(strict=False)),
+            "source": str(source_resolved),
+            "dest": str(dest_resolved),
             "profile": profile,
             "created_at": now,
             "updated_at": now,
@@ -109,7 +115,11 @@ def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobC
         conn.commit()
     finally:
         conn.close()
-    return JobConfig(job_dir=job_dir, source=source.resolve(), dest=dest.resolve(strict=False), profile=profile)
+    return JobConfig(job_dir=job_dir, source=source_resolved, dest=dest_resolved, profile=profile)
+
+
+def is_same_or_inside(candidate: Path, parent: Path) -> bool:
+    return candidate == parent or parent in candidate.parents
 
 
 def load_config(job_dir: Path) -> JobConfig:

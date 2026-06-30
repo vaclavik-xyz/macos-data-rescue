@@ -57,6 +57,41 @@ def test_pyproject_declares_console_script() -> None:
     assert data["project"]["scripts"]["macos-data-rescue"] == "macos_data_rescue.cli:main"
 
 
+def test_init_rejects_job_or_dest_inside_source(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    source.mkdir()
+
+    job_inside = source / ".rescue"
+    result = run_cli(
+        "init",
+        "--job-dir",
+        str(job_inside),
+        "--source",
+        str(source),
+        "--dest",
+        str(tmp_path / "dest"),
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "must not be inside source" in result.stderr
+    assert not job_inside.exists()
+
+    dest_inside = source / "rescued-output"
+    result = run_cli(
+        "init",
+        "--job-dir",
+        str(tmp_path / "job"),
+        "--source",
+        str(source),
+        "--dest",
+        str(dest_inside),
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "must not be inside source" in result.stderr
+    assert not dest_inside.exists()
+
+
 def test_scan_creates_manifest_with_phases_and_excludes(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     write_file(source / "Desktop" / "invoice.txt", b"desktop")
