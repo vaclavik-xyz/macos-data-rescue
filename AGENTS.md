@@ -10,6 +10,7 @@
 
 ## Safety
 - Never delete or modify source data.
+- Before using the CLI on real customer data, read `docs/agent-runbook.md`.
 - Destination writes must be resumable and atomic where practical: copy to temp, then replace/rename.
 - Keep manifests/logs under the job directory, not inside source.
 - Do not store customer personal data in repository fixtures.

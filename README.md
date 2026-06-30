@@ -29,6 +29,8 @@ No runtime dependencies are used; `pytest` is only a dev dependency.
 
 ## Typical service workflow
 
+Before using the CLI on real customer data, read [docs/agent-runbook.md](docs/agent-runbook.md).
+
 Assume the damaged Mac is mounted on a healthy service Mac as:
 
 ```text
