@@ -205,6 +205,80 @@ def test_scan_creates_manifest_with_phases_and_excludes(tmp_path: Path) -> None:
     assert ".Trash/old.txt" not in rows
 
 
+def test_scan_phase_important_only_records_high_value_dirs(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    write_file(source / "Documents" / "nested" / "contract.txt", b"contract")
+    write_file(source / "Downloads" / "installer.dmg", b"download")
+    write_file(source / "Pictures" / "photo.jpg", b"jpeg")
+    write_file(source / "Library" / "Application Support" / "Example" / "prefs.plist", b"prefs")
+    write_file(source / "Projects" / "notes.txt", b"notes")
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "important")
+
+    rows = file_rows(job_dir)
+    assert sorted(rows) == [
+        "Desktop/invoice.txt",
+        "Documents/nested/contract.txt",
+        "Downloads/installer.dmg",
+    ]
+    assert {row["phase"] for row in rows.values()} == {"important"}
+
+
+def test_scan_phase_photos_adds_rows_without_duplicating_existing_manifest(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    write_file(source / "Pictures" / "photo.jpg", b"jpeg")
+    write_file(source / "Movies" / "clip.mov", b"movie")
+    write_file(source / "Music" / "song.m4a", b"music")
+    write_file(source / "Library" / "Application Support" / "Example" / "prefs.plist", b"prefs")
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "important")
+    first_rows = file_rows(job_dir)
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "photos")
+
+    rows = file_rows(job_dir)
+    assert len(first_rows) == 1
+    assert sorted(rows) == [
+        "Desktop/invoice.txt",
+        "Movies/clip.mov",
+        "Music/song.m4a",
+        "Pictures/photo.jpg",
+    ]
+    assert rows["Desktop/invoice.txt"]["id"] == first_rows["Desktop/invoice.txt"]["id"]
+    assert rows["Desktop/invoice.txt"]["phase"] == "important"
+    assert rows["Pictures/photo.jpg"]["phase"] == "photos"
+    assert rows["Movies/clip.mov"]["phase"] == "photos"
+    assert rows["Music/song.m4a"]["phase"] == "photos"
+
+
+def test_copy_after_important_scan_does_not_require_full_scan(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    write_file(source / "Pictures" / "photo.jpg", b"jpeg")
+    write_file(source / "Library" / "Application Support" / "Example" / "prefs.plist", b"prefs")
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "important")
+
+    result = run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+    status = run_cli("status", "--job-dir", str(job_dir)).stdout
+    payload = json.loads(run_cli("report", "--job-dir", str(job_dir), "--format", "json").stdout)
+
+    assert "copied=1" in result.stdout
+    assert (dest_dir / "Desktop" / "invoice.txt").read_bytes() == b"desktop"
+    assert not (dest_dir / "Pictures" / "photo.jpg").exists()
+    assert status.startswith("pending=0 copying=0 copied=1")
+    assert [item["relative_path"] for item in payload["files"]] == ["Desktop/invoice.txt"]
+
+
 def test_copy_copies_files_preserves_content_and_updates_status(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     write_file(source / "Desktop" / "invoice.txt", b"desktop")

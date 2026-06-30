@@ -7,7 +7,7 @@ Build a usable private MVP CLI for macOS service data rescue. It should copy a d
 
 ```bash
 macos-data-rescue init --job-dir <dir> --source <home> --dest <dest> [--profile customer-home]
-macos-data-rescue scan --job-dir <dir>
+macos-data-rescue scan --job-dir <dir> [--phase important|photos|library|all]
 macos-data-rescue copy --job-dir <dir> [--phase important|photos|library|all] [--timeout <seconds>] [--limit <n>]
 macos-data-rescue resume --job-dir <dir> [same options as copy]
 macos-data-rescue status --job-dir <dir>

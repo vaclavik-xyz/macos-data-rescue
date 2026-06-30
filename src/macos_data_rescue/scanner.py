@@ -11,6 +11,7 @@ from .manifest import ScannedFile, load_config, migrate_manifest, upsert_scanned
 
 IMPORTANT_DIRS = {"Desktop", "Documents", "Downloads"}
 PHOTO_DIRS = {"Pictures", "Movies", "Music"}
+SCAN_PHASES = ("important", "photos", "library", "all")
 TOP_LEVEL_EXCLUDES = {".Trash", ".Spotlight-V100", ".fseventsd", "node_modules"}
 EXCLUDED_PARTS = {"node_modules", "__pycache__"}
 LIBRARY_EXCLUDE_PREFIXES = (
@@ -36,18 +37,49 @@ ICLOUD_PLACEHOLDER_WARNING = (
 )
 
 
-def scan_job(job_dir: Path) -> int:
+def scan_job(job_dir: Path, *, phase: str = "all") -> int:
+    if phase not in SCAN_PHASES:
+        raise RescueError(f"unsupported scan phase: {phase}")
     config = load_config(job_dir)
     if config.profile != "customer-home":
         raise RescueError(f"unsupported profile: {config.profile}")
     if not config.source.exists():
         raise RescueError(f"source does not exist: {config.source}")
     migrate_manifest(job_dir)
-    return upsert_scanned_files(job_dir, iter_source_files(config.source))
+    return upsert_scanned_files(job_dir, iter_source_files(config.source, phase=phase))
 
 
-def iter_source_files(source: Path):
-    for root, dirs, files in os.walk(source, topdown=True, followlinks=False):
+def iter_source_files(source: Path, *, phase: str = "all"):
+    for scan_root in scan_roots(source, phase):
+        yield from iter_tree(source, scan_root)
+
+
+def scan_roots(source: Path, phase: str) -> tuple[Path, ...]:
+    if phase == "all":
+        return (source,)
+    if phase == "important":
+        names = IMPORTANT_DIRS
+    elif phase == "photos":
+        names = PHOTO_DIRS
+    elif phase == "library":
+        names = {"Library"}
+    else:
+        raise RescueError(f"unsupported scan phase: {phase}")
+
+    roots = []
+    for name in sorted(names):
+        root = source / name
+        try:
+            info = root.stat(follow_symlinks=False)
+        except OSError:
+            continue
+        if stat.S_ISDIR(info.st_mode):
+            roots.append(root)
+    return tuple(roots)
+
+
+def iter_tree(source: Path, scan_root: Path):
+    for root, dirs, files in os.walk(scan_root, topdown=True, followlinks=False):
         root_path = Path(root)
         dirs.sort()
         files.sort()

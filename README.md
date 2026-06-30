@@ -7,7 +7,7 @@ The goal is simple: **one bad file must not stop the whole rescue**. The tool sc
 ## Current MVP
 
 - `init` creates a rescue job manifest.
-- `scan` records source files with phases and default excludes.
+- `scan` records source files with phases and default excludes; `--phase` can scan high-value folders before walking the full home.
 - `copy` / `resume` copy file-by-file through an isolated worker process.
 - Per-file timeout marks stuck files as `timed_out` and continues.
 - Symlinks are skipped instead of followed, to avoid copying unrelated technician-host paths.
@@ -43,15 +43,20 @@ SRC="/Volumes/Macintosh HD - Data/Users/customer"
 DST="/Volumes/RecoverySSD/Customer/user-data"
 
 uv run macos-data-rescue init --job-dir "$JOB" --source "$SRC" --dest "$DST"
-uv run macos-data-rescue scan --job-dir "$JOB"
+uv run macos-data-rescue scan --job-dir "$JOB" --phase important
+uv run macos-data-rescue copy --job-dir "$JOB" --phase important --timeout 30
 ```
 
-Copy the highest-value data first:
+Then scan and copy the next phases. This keeps Desktop, Documents, and Downloads moving before the technician risks a long scan through damaged Library/cache trees:
 
 ```bash
-uv run macos-data-rescue copy --job-dir "$JOB" --phase important --timeout 30
+uv run macos-data-rescue scan --job-dir "$JOB" --phase photos
 uv run macos-data-rescue copy --job-dir "$JOB" --phase photos --timeout 60
+
+uv run macos-data-rescue scan --job-dir "$JOB" --phase library
 uv run macos-data-rescue copy --job-dir "$JOB" --phase library --timeout 30
+
+uv run macos-data-rescue scan --job-dir "$JOB" --phase all
 uv run macos-data-rescue resume --job-dir "$JOB" --phase all --timeout 30
 ```
 
@@ -81,6 +86,8 @@ Default `customer-home` profile:
 | `photos` | `Pictures`, `Movies`, `Music` |
 | `library` | selected `Library` data, excluding caches/logs |
 | `all` | everything not excluded |
+
+`scan --phase all` is the default and keeps the original full-home behavior. Re-running `scan` for another phase upserts rows into the same manifest without deleting earlier phase results.
 
 Default excludes include `.Trash`, `Library/Caches`, `Library/Logs`, `node_modules`, `.Spotlight-V100`, `.fseventsd`, `__pycache__`, and common cache folders.
 
