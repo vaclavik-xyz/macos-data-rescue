@@ -7,7 +7,8 @@ The goal is simple: **one bad file must not stop the whole rescue**. The tool sc
 ## Current MVP
 
 - `init` creates a rescue job manifest.
-- `scan` records source files with phases and default excludes; `--phase` can rescue visible home data before slower Library/app/application choices.
+- `scan` records source files with phases and default excludes; `--phase`, `--timeout`, and `--limit` can rescue visible home data before slower Library/app/application choices.
+- Scan commits manifest rows in batches, so an interrupted or timeout-limited scan can leave useful rows ready for `copy`.
 - `copy` / `resume` copy file-by-file through an isolated worker process.
 - Per-file timeout marks stuck files as `timed_out` and continues.
 - Symlinks are skipped instead of followed, to avoid copying unrelated technician-host paths.
@@ -45,32 +46,34 @@ SRC="/Volumes/Macintosh HD - Data/Users/customer"
 DST="/Volumes/RecoverySSD/Customer/user-data"
 
 uv run macos-data-rescue init --job-dir "$JOB" --source "$SRC" --dest "$DST"
-uv run macos-data-rescue scan --job-dir "$JOB" --phase visible-home
-uv run macos-data-rescue copy --job-dir "$JOB" --phase visible-home --timeout 30
+uv run macos-data-rescue scan --job-dir "$JOB" --phase visible-home --timeout 300
+uv run macos-data-rescue copy --job-dir "$JOB" --phase visible-home --timeout 3600
 ```
+
+If scan prints `stopped=timeout` or `stopped=limit`, the manifest still contains the rows committed so far. Start `copy` for that phase, then run a later scan with more time or no limit when you want broader coverage.
 
 Then automatically include hidden home dotfiles/dotfolders, with obvious cache ballast pruned:
 
 ```bash
-uv run macos-data-rescue scan --job-dir "$JOB" --phase hidden-home
-uv run macos-data-rescue copy --job-dir "$JOB" --phase hidden-home --timeout 30
+uv run macos-data-rescue scan --job-dir "$JOB" --phase hidden-home --timeout 300
+uv run macos-data-rescue copy --job-dir "$JOB" --phase hidden-home --timeout 3600
 ```
 
 Ask the operator/customer before slower or less portable scopes:
 
 ```bash
-uv run macos-data-rescue scan --job-dir "$JOB" --phase app-data
-uv run macos-data-rescue copy --job-dir "$JOB" --phase app-data --timeout 30
+uv run macos-data-rescue scan --job-dir "$JOB" --phase app-data --timeout 300
+uv run macos-data-rescue copy --job-dir "$JOB" --phase app-data --timeout 3600
 
-uv run macos-data-rescue scan --job-dir "$JOB" --phase applications
-uv run macos-data-rescue copy --job-dir "$JOB" --phase applications --timeout 30
+uv run macos-data-rescue scan --job-dir "$JOB" --phase applications --timeout 300
+uv run macos-data-rescue copy --job-dir "$JOB" --phase applications --timeout 3600
 ```
 
 If the customer explicitly wants maximum practical home coverage and there is enough time/space, run full-home after the focused phases:
 
 ```bash
-uv run macos-data-rescue scan --job-dir "$JOB" --phase full-home
-uv run macos-data-rescue resume --job-dir "$JOB" --phase all --timeout 30
+uv run macos-data-rescue scan --job-dir "$JOB" --phase full-home --timeout 300
+uv run macos-data-rescue resume --job-dir "$JOB" --phase all --timeout 3600
 ```
 
 Check progress and produce a report:
@@ -112,6 +115,8 @@ Legacy phases remain available for existing jobs and older scripts:
 
 Re-running `scan` for another phase upserts rows into the same manifest without deleting earlier phase results.
 
+`scan --timeout SECONDS` stops cooperatively between files and prints `stopped=timeout`. `scan --limit N` records at most `N` scan results for that run and prints `stopped=limit` when the run reached that cap. Both modes commit rows in batches, so `copy` can start from the partial manifest.
+
 Default excludes include `.Trash`, `Library/Caches`, `Library/Logs`, `node_modules`, `.Spotlight-V100`, `.fseventsd`, `__pycache__`, and common cache folders.
 
 ## Notes / limitations
@@ -121,7 +126,7 @@ Default excludes include `.Trash`, `Library/Caches`, `Library/Logs`, `node_modul
 - macOS extended attributes/resource forks are preserved best-effort through libSystem. The copier deliberately skips `com.apple.quarantine` and `com.apple.macl`; other xattr failures are reported as per-file warnings. `copied` guarantees content byte-count completeness, not full metadata preservation.
 - **Copy completeness:** `copied` means the worker copied the same byte count that was recorded in the manifest for that file. If the worker reads fewer bytes, the file is marked `failed`, any partial temp output is discarded, and JSON/Markdown reports show the partial byte count.
 - **iCloud / Optimize Mac Storage warning:** files offloaded by iCloud Drive or Photos may exist on the mounted disk only as dataless placeholders. Over Share Disk / Target Disk Mode they can copy as empty or tiny files and cannot be downloaded from the mounted volume. The report marks specific files as `suspected iCloud dataless placeholder` when the macOS dataless file flag or conservative path/xattr/size heuristics match; the customer must be told that those files may not have been physically present on disk, and recovery may require the live signed-in Mac or iCloud.com/export.
-- Per-file timeouts protect the copy phase. The scan phase still walks/stats the mounted source directly, so a severe disk/kernel I/O hang can still stall scan.
+- Per-file timeouts protect the copy phase. Scan `--timeout` is cooperative between files and scan commits rows in batches, but a severe disk/kernel I/O hang inside one filesystem call can still stall scan.
 - For true hardware/kernel I/O hangs, a killed child may not exit immediately; the parent records timeout and continues as far as the OS allows.
 - This is not a forensic imaging tool. It is a practical technician rescue copier for mounted, unlocked user data.
 

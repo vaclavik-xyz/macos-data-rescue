@@ -217,12 +217,15 @@ def load_config(job_dir: Path) -> JobConfig:
     )
 
 
-def upsert_scanned_files(job_dir: Path, files: Iterable[ScannedFile]) -> int:
+def upsert_scanned_files(job_dir: Path, files: Iterable[ScannedFile], *, batch_size: int = 100) -> int:
+    if batch_size <= 0:
+        raise ValueError("batch_size must be greater than zero")
     conn = connect(job_dir)
-    now = utc_now()
     count = 0
+    pending = 0
     try:
         for item in files:
+            now = utc_now()
             existing = conn.execute(
                 """
                 select size, mtime_ns, status, error, copied_bytes, started_at, finished_at
@@ -289,17 +292,27 @@ def upsert_scanned_files(job_dir: Path, files: Iterable[ScannedFile]) -> int:
                 ),
             )
             count += 1
-        conn.execute(
-            """
-            insert into config(key, value) values('updated_at', ?)
-            on conflict(key) do update set value = excluded.value
-            """,
-            (now,),
-        )
-        conn.commit()
+            pending += 1
+            if pending >= batch_size:
+                commit_scan_batch(conn)
+                pending = 0
+        if pending or count == 0:
+            commit_scan_batch(conn)
     finally:
         conn.close()
     return count
+
+
+def commit_scan_batch(conn: sqlite3.Connection) -> None:
+    now = utc_now()
+    conn.execute(
+        """
+        insert into config(key, value) values('updated_at', ?)
+        on conflict(key) do update set value = excluded.value
+        """,
+        (now,),
+    )
+    conn.commit()
 
 
 def selected_files(job_dir: Path, phase: str, limit: int | None = None) -> list[sqlite3.Row]:

@@ -7,7 +7,7 @@ Build a usable private MVP CLI for macOS service data rescue. It should copy a d
 
 ```bash
 macos-data-rescue init --job-dir <dir> --source <home> --dest <dest> [--profile customer-home]
-macos-data-rescue scan --job-dir <dir> [--phase visible-home|hidden-home|app-data|applications|full-home|important|photos|library|all]
+macos-data-rescue scan --job-dir <dir> [--phase visible-home|hidden-home|app-data|applications|full-home|important|photos|library|all] [--timeout <seconds>] [--limit <n>]
 macos-data-rescue copy --job-dir <dir> [--phase visible-home|hidden-home|app-data|applications|full-home|important|photos|library|all] [--timeout <seconds>] [--limit <n>]
 macos-data-rescue resume --job-dir <dir> [same options as copy]
 macos-data-rescue status --job-dir <dir>
@@ -27,6 +27,13 @@ Statuses: `pending`, `copying`, `copied`, `failed`, `timed_out`, `skipped`.
 - Preserve mtime and mode; best-effort xattrs on macOS.
 - On failure/timeout, record error and continue.
 - Re-running should skip already copied files with matching size/mtime.
+
+## Scan behavior
+- Source is read-only.
+- Scan commits manifest rows in batches so partial work survives interruption after a committed batch.
+- `--timeout` stops cooperatively between files and prints `stopped=timeout`.
+- `--limit` stops after a bounded number of scanned files and prints `stopped=limit`.
+- Severe kernel/filesystem hangs inside one `os.walk` or `stat` call can still stall scan; escalate to imaging or a future hard scanner watchdog if that happens.
 
 ## Profiles/phases
 `customer-home` profile:

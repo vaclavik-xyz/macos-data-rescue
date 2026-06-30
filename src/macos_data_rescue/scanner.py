@@ -3,6 +3,8 @@ from __future__ import annotations
 import ctypes
 import os
 import stat
+import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import RescueError
@@ -86,9 +88,29 @@ ICLOUD_PLACEHOLDER_WARNING = (
     "suspected iCloud dataless placeholder: data may not have been physically "
     "present on disk"
 )
+DEFAULT_SCAN_BATCH_SIZE = 100
 
 
-def scan_job(job_dir: Path, *, phase: str = "all") -> int:
+@dataclass(frozen=True)
+class ScanSummary:
+    scanned: int
+    stopped: str | None = None
+
+    def as_line(self) -> str:
+        line = f"scanned={self.scanned}"
+        if self.stopped:
+            line += f" stopped={self.stopped}"
+        return line
+
+
+def scan_job(
+    job_dir: Path,
+    *,
+    phase: str = "all",
+    limit: int | None = None,
+    timeout: float | None = None,
+    batch_size: int = DEFAULT_SCAN_BATCH_SIZE,
+) -> ScanSummary:
     if phase not in SCAN_PHASES:
         raise RescueError(f"unsupported scan phase: {phase}")
     config = load_config(job_dir)
@@ -97,7 +119,37 @@ def scan_job(job_dir: Path, *, phase: str = "all") -> int:
     if not config.source.exists():
         raise RescueError(f"source does not exist: {config.source}")
     migrate_manifest(job_dir)
-    return upsert_scanned_files(job_dir, iter_source_files(config.source, phase=phase))
+    limiter = ScanLimiter(limit=limit, timeout=timeout)
+    count = upsert_scanned_files(
+        job_dir,
+        limiter.wrap(iter_source_files(config.source, phase=phase)),
+        batch_size=batch_size,
+    )
+    return ScanSummary(scanned=count, stopped=limiter.stopped)
+
+
+class ScanLimiter:
+    def __init__(self, *, limit: int | None, timeout: float | None) -> None:
+        self.limit = limit
+        self.deadline = time.monotonic() + timeout if timeout is not None else None
+        self.scanned = 0
+        self.stopped: str | None = None
+
+    def wrap(self, files):
+        iterator = iter(files)
+        while True:
+            if self.limit is not None and self.scanned >= self.limit:
+                self.stopped = "limit"
+                return
+            if self.deadline is not None and time.monotonic() >= self.deadline:
+                self.stopped = "timeout"
+                return
+            try:
+                item = next(iterator)
+            except StopIteration:
+                return
+            yield item
+            self.scanned += 1
 
 
 def iter_source_files(source: Path, *, phase: str = "all"):

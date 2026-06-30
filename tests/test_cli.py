@@ -5,6 +5,7 @@ import stat
 import sqlite3
 import subprocess
 import sys
+import time
 import tomllib
 from pathlib import Path
 from shutil import which
@@ -226,6 +227,87 @@ def test_scan_phase_important_only_records_high_value_dirs(tmp_path: Path) -> No
         "Downloads/installer.dmg",
     ]
     assert {row["phase"] for row in rows.values()} == {"important"}
+
+
+def test_scan_limit_creates_partial_manifest_that_can_be_copied(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "a.txt", b"a")
+    write_file(source / "Desktop" / "b.txt", b"b")
+    write_file(source / "Desktop" / "c.txt", b"c")
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    scan = run_cli("scan", "--job-dir", str(job_dir), "--phase", "important", "--limit", "2")
+    copy = run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+
+    rows = file_rows(job_dir)
+    assert "scanned=2" in scan.stdout
+    assert "stopped=limit" in scan.stdout
+    assert len(rows) == 2
+    assert "copied=2" in copy.stdout
+    assert sorted(path.name for path in (dest_dir / "Desktop").iterdir()) == ["a.txt", "b.txt"]
+
+
+def test_scan_batches_are_committed_before_generator_finishes(tmp_path: Path) -> None:
+    from macos_data_rescue.manifest import ScannedFile, init_manifest, upsert_scanned_files
+
+    source = tmp_path / "source-home"
+    source.mkdir()
+    job_dir = tmp_path / "job"
+    init_manifest(job_dir, source, tmp_path / "dest", "customer-home")
+
+    def interrupted_files():
+        for name in ("a.txt", "b.txt", "c.txt"):
+            yield ScannedFile(
+                relative_path=name,
+                size=1,
+                mtime_ns=1,
+                mode=0o644,
+                kind="file",
+                phase="all",
+            )
+        raise RuntimeError("scan interrupted")
+
+    try:
+        upsert_scanned_files(job_dir, interrupted_files(), batch_size=2)
+    except RuntimeError:
+        pass
+
+    rows = file_rows(job_dir)
+    assert sorted(rows) == ["a.txt", "b.txt"]
+
+
+def test_scan_timeout_commits_partial_manifest(tmp_path: Path, monkeypatch) -> None:
+    from macos_data_rescue import scanner
+    from macos_data_rescue.manifest import ScannedFile
+
+    source = tmp_path / "source-home"
+    source.mkdir()
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    def slow_files(source_path: Path, *, phase: str):
+        for index in range(5):
+            time.sleep(0.02)
+            yield ScannedFile(
+                relative_path=f"{index}.txt",
+                size=1,
+                mtime_ns=1,
+                mode=0o644,
+                kind="file",
+                phase=phase,
+            )
+
+    monkeypatch.setattr(scanner, "iter_source_files", slow_files)
+
+    summary = scanner.scan_job(job_dir, phase="all", timeout=0.01, batch_size=1)
+
+    rows = file_rows(job_dir)
+    assert summary.scanned == 1
+    assert summary.stopped == "timeout"
+    assert sorted(rows) == ["0.txt"]
 
 
 def test_scan_phase_visible_home_records_non_hidden_home_without_library_or_dot_items(tmp_path: Path) -> None:

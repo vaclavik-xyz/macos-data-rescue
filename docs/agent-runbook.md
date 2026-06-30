@@ -84,47 +84,49 @@ uv run macos-data-rescue init --job-dir "$JOB" --source "$SRC" --dest "$DST"
 Rescue normal visible home data first. This includes standard folders and customer-created non-hidden folders, while skipping `Library`, `Applications`, and obvious cache/trash ballast:
 
 ```bash
-uv run macos-data-rescue scan --job-dir "$JOB" --phase visible-home
-uv run macos-data-rescue copy --job-dir "$JOB" --phase visible-home --timeout 30
+uv run macos-data-rescue scan --job-dir "$JOB" --phase visible-home --timeout 300
+uv run macos-data-rescue copy --job-dir "$JOB" --phase visible-home --timeout 3600
 ```
+
+If scan reports `stopped=timeout` or `stopped=limit`, start copying the rows already committed, then run a later scan with more time or no limit when broader coverage is needed. Copy jobs can run for hours; the timeout is per file, not a whole-job timer.
 
 Then copy hidden home dotfiles/dotfolders. This is part of the default customer-home workflow because hidden home data can matter for ordinary users too:
 
 ```bash
-uv run macos-data-rescue scan --job-dir "$JOB" --phase hidden-home
-uv run macos-data-rescue copy --job-dir "$JOB" --phase hidden-home --timeout 30
+uv run macos-data-rescue scan --job-dir "$JOB" --phase hidden-home --timeout 300
+uv run macos-data-rescue copy --job-dir "$JOB" --phase hidden-home --timeout 3600
 ```
 
 Run `app-data` only after explicit approval:
 
 ```bash
-uv run macos-data-rescue scan --job-dir "$JOB" --phase app-data
-uv run macos-data-rescue copy --job-dir "$JOB" --phase app-data --timeout 30
+uv run macos-data-rescue scan --job-dir "$JOB" --phase app-data --timeout 300
+uv run macos-data-rescue copy --job-dir "$JOB" --phase app-data --timeout 3600
 ```
 
 Run `applications` only after explicit approval:
 
 ```bash
-uv run macos-data-rescue scan --job-dir "$JOB" --phase applications
-uv run macos-data-rescue copy --job-dir "$JOB" --phase applications --timeout 30
+uv run macos-data-rescue scan --job-dir "$JOB" --phase applications --timeout 300
+uv run macos-data-rescue copy --job-dir "$JOB" --phase applications --timeout 3600
 ```
 
 Run `full-home` only after focused recovery, if maximum practical coverage is requested and space/time allow:
 
 ```bash
-uv run macos-data-rescue scan --job-dir "$JOB" --phase full-home
-uv run macos-data-rescue resume --job-dir "$JOB" --phase all --timeout 30
+uv run macos-data-rescue scan --job-dir "$JOB" --phase full-home --timeout 300
+uv run macos-data-rescue resume --job-dir "$JOB" --phase all --timeout 3600
 ```
 
 Legacy phase names remain supported for older jobs and scripts:
 
 ```bash
-uv run macos-data-rescue scan --job-dir "$JOB" --phase important
-uv run macos-data-rescue copy --job-dir "$JOB" --phase important --timeout 30
-uv run macos-data-rescue scan --job-dir "$JOB" --phase photos
-uv run macos-data-rescue copy --job-dir "$JOB" --phase photos --timeout 60
-uv run macos-data-rescue scan --job-dir "$JOB" --phase library
-uv run macos-data-rescue copy --job-dir "$JOB" --phase library --timeout 30
+uv run macos-data-rescue scan --job-dir "$JOB" --phase important --timeout 300
+uv run macos-data-rescue copy --job-dir "$JOB" --phase important --timeout 3600
+uv run macos-data-rescue scan --job-dir "$JOB" --phase photos --timeout 300
+uv run macos-data-rescue copy --job-dir "$JOB" --phase photos --timeout 3600
+uv run macos-data-rescue scan --job-dir "$JOB" --phase library --timeout 300
+uv run macos-data-rescue copy --job-dir "$JOB" --phase library --timeout 3600
 ```
 
 Check status any time:
@@ -158,6 +160,8 @@ Per-file statuses in `status` and reports are the real rescue outcome:
 - `skipped`: intentionally not copied, currently used for symlinks to avoid following external targets.
 Warnings are separate per-file report fields, not statuses. They are customer-visible notes such as suspected iCloud dataless placeholder or xattr preservation issue.
 
+Scan output may include `stopped=timeout` or `stopped=limit`. That is not a copy failure. It means the scan command intentionally stopped after committing a partial manifest; run `copy`/`resume`, then repeat scan if more coverage is needed.
+
 ## Warnings To Explain
 
 ### iCloud / Dataless Placeholders
@@ -179,6 +183,7 @@ The `applications` phase copies `.app` bundle files from the source volume `/App
 Stop normal file-level copying and escalate when:
 
 - `scan` hangs or the mounted source stops responding.
+- `scan --timeout` repeatedly stops before producing useful rows for a phase.
 - Many files become `timed_out` in a short run.
 - The destination reports `ENOSPC` or free space is clearly insufficient.
 - The source disappears, remounts unexpectedly, or paths change.

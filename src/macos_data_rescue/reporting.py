@@ -29,12 +29,13 @@ WARNINGS = (
         ),
     },
     {
-        "code": "scan_not_timeout_guarded",
-        "title": "Scan is not timeout-guarded",
+        "code": "scan_timeout_is_cooperative",
+        "title": "Scan timeout is cooperative",
         "message": (
-            "Per-file timeouts protect the copy phase. The scan phase still walks "
-            "and stats the mounted source directly, so a severe disk/kernel I/O "
-            "hang can still stall scan."
+            "Scan commits manifest rows in batches and can stop at --timeout or "
+            "--limit between files. It still walks and stats the mounted source "
+            "directly, so a severe disk/kernel I/O hang inside one filesystem call "
+            "can still stall scan."
         ),
     },
 )

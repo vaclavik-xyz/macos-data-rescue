@@ -41,6 +41,8 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser = subparsers.add_parser("scan", help="Scan source files into the manifest.")
     scan_parser.add_argument("--job-dir", required=True, type=Path)
     scan_parser.add_argument("--phase", default="all", choices=PHASES)
+    scan_parser.add_argument("--timeout", type=positive_float)
+    scan_parser.add_argument("--limit", type=positive_int)
 
     copy_parser = subparsers.add_parser("copy", help="Copy files recorded in the manifest.")
     add_copy_options(copy_parser)
@@ -87,8 +89,8 @@ def main(argv: list[str] | None = None) -> int:
             config = init_manifest(args.job_dir, args.source, args.dest, args.profile)
             print(f"initialized job={config.job_dir} source={config.source} dest={config.dest}")
         elif args.command == "scan":
-            count = scan_job(args.job_dir, phase=args.phase)
-            print(f"scanned={count}")
+            summary = scan_job(args.job_dir, phase=args.phase, limit=args.limit, timeout=args.timeout)
+            print(summary.as_line())
         elif args.command in {"copy", "resume"}:
             summary = copy_job(
                 args.job_dir,
