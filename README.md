@@ -7,7 +7,7 @@ The goal is simple: **one bad file must not stop the whole rescue**. The tool sc
 ## Current MVP
 
 - `init` creates a rescue job manifest.
-- `scan` records source files with phases and default excludes; `--phase` can scan high-value folders before walking the full home.
+- `scan` records source files with phases and default excludes; `--phase` can rescue visible home data before slower Library/app/application choices.
 - `copy` / `resume` copy file-by-file through an isolated worker process.
 - Per-file timeout marks stuck files as `timed_out` and continues.
 - Symlinks are skipped instead of followed, to avoid copying unrelated technician-host paths.
@@ -45,20 +45,31 @@ SRC="/Volumes/Macintosh HD - Data/Users/customer"
 DST="/Volumes/RecoverySSD/Customer/user-data"
 
 uv run macos-data-rescue init --job-dir "$JOB" --source "$SRC" --dest "$DST"
-uv run macos-data-rescue scan --job-dir "$JOB" --phase important
-uv run macos-data-rescue copy --job-dir "$JOB" --phase important --timeout 30
+uv run macos-data-rescue scan --job-dir "$JOB" --phase visible-home
+uv run macos-data-rescue copy --job-dir "$JOB" --phase visible-home --timeout 30
 ```
 
-Then scan and copy the next phases. This keeps Desktop, Documents, and Downloads moving before the technician risks a long scan through damaged Library/cache trees:
+Then automatically include hidden home dotfiles/dotfolders, with obvious cache ballast pruned:
 
 ```bash
-uv run macos-data-rescue scan --job-dir "$JOB" --phase photos
-uv run macos-data-rescue copy --job-dir "$JOB" --phase photos --timeout 60
+uv run macos-data-rescue scan --job-dir "$JOB" --phase hidden-home
+uv run macos-data-rescue copy --job-dir "$JOB" --phase hidden-home --timeout 30
+```
 
-uv run macos-data-rescue scan --job-dir "$JOB" --phase library
-uv run macos-data-rescue copy --job-dir "$JOB" --phase library --timeout 30
+Ask the operator/customer before slower or less portable scopes:
 
-uv run macos-data-rescue scan --job-dir "$JOB" --phase all
+```bash
+uv run macos-data-rescue scan --job-dir "$JOB" --phase app-data
+uv run macos-data-rescue copy --job-dir "$JOB" --phase app-data --timeout 30
+
+uv run macos-data-rescue scan --job-dir "$JOB" --phase applications
+uv run macos-data-rescue copy --job-dir "$JOB" --phase applications --timeout 30
+```
+
+If the customer explicitly wants maximum practical home coverage and there is enough time/space, run full-home after the focused phases:
+
+```bash
+uv run macos-data-rescue scan --job-dir "$JOB" --phase full-home
 uv run macos-data-rescue resume --job-dir "$JOB" --phase all --timeout 30
 ```
 
@@ -84,12 +95,22 @@ Default `customer-home` profile:
 
 | Phase | Includes |
 |---|---|
+| `visible-home` | non-hidden top-level home data except `Library`, `Applications`, and clear cache/trash ballast; includes standard folders and customer-created folders |
+| `hidden-home` | top-level dotfiles/dotfolders, excluding clear cache/package/temp ballast |
+| `app-data` | curated customer-relevant `~/Library` data such as Mail, Messages, Safari, Keychains, MobileSync backups, and selected Application Support |
+| `applications` | application bundles from the source volume `/Applications` and `~/Applications`, copied under `Volume Applications/` and `Home Applications/` |
+| `full-home` | visible, hidden, and Library content under the home folder, still applying safe cache/log/temp excludes |
+
+Legacy phases remain available for existing jobs and older scripts:
+
+| Legacy phase | Includes |
+|---|---|
 | `important` | `Desktop`, `Documents`, `Downloads` |
 | `photos` | `Pictures`, `Movies`, `Music` |
 | `library` | selected `Library` data, excluding caches/logs |
-| `all` | everything not excluded |
+| `all` | all manifest rows for copy/resume; default scan keeps the original full-home behavior |
 
-`scan --phase all` is the default and keeps the original full-home behavior. Re-running `scan` for another phase upserts rows into the same manifest without deleting earlier phase results.
+Re-running `scan` for another phase upserts rows into the same manifest without deleting earlier phase results.
 
 Default excludes include `.Trash`, `Library/Caches`, `Library/Logs`, `node_modules`, `.Spotlight-V100`, `.fseventsd`, `__pycache__`, and common cache folders.
 

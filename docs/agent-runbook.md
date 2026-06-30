@@ -23,6 +23,18 @@ Do not use this tool as the first response when the disk is disappearing, making
 - Do not run cleanup, delete, repair, indexing, or metadata-modifying commands on the source.
 - Record the exact source, destination, and job paths in service notes before starting.
 
+## Intake Questions
+
+Confirm these before starting a real customer run:
+
+- What is the exact mounted source user home path?
+- What recovery disk path should hold `JOB` and `DST`?
+- Is the default scope acceptable: `visible-home` plus `hidden-home`?
+- Should the run include app data from `~/Library` such as Mail, Messages, Safari, Notes, Keychains, or iPhone/iPad backups?
+- Should the run include application bundles from source volume `/Applications` and `~/Applications`?
+- Is a broader `full-home` attempt requested after focused recovery, and is there enough destination space/time?
+- Does the source look unstable enough to stop and image/escalate before file-level copy?
+
 Useful checks:
 
 ```bash
@@ -69,24 +81,50 @@ Initialize the manifest:
 uv run macos-data-rescue init --job-dir "$JOB" --source "$SRC" --dest "$DST"
 ```
 
-Rescue high-value data first:
+Rescue normal visible home data first. This includes standard folders and customer-created non-hidden folders, while skipping `Library`, `Applications`, and obvious cache/trash ballast:
+
+```bash
+uv run macos-data-rescue scan --job-dir "$JOB" --phase visible-home
+uv run macos-data-rescue copy --job-dir "$JOB" --phase visible-home --timeout 30
+```
+
+Then copy hidden home dotfiles/dotfolders. This is part of the default customer-home workflow because hidden home data can matter for ordinary users too:
+
+```bash
+uv run macos-data-rescue scan --job-dir "$JOB" --phase hidden-home
+uv run macos-data-rescue copy --job-dir "$JOB" --phase hidden-home --timeout 30
+```
+
+Run `app-data` only after explicit approval:
+
+```bash
+uv run macos-data-rescue scan --job-dir "$JOB" --phase app-data
+uv run macos-data-rescue copy --job-dir "$JOB" --phase app-data --timeout 30
+```
+
+Run `applications` only after explicit approval:
+
+```bash
+uv run macos-data-rescue scan --job-dir "$JOB" --phase applications
+uv run macos-data-rescue copy --job-dir "$JOB" --phase applications --timeout 30
+```
+
+Run `full-home` only after focused recovery, if maximum practical coverage is requested and space/time allow:
+
+```bash
+uv run macos-data-rescue scan --job-dir "$JOB" --phase full-home
+uv run macos-data-rescue resume --job-dir "$JOB" --phase all --timeout 30
+```
+
+Legacy phase names remain supported for older jobs and scripts:
 
 ```bash
 uv run macos-data-rescue scan --job-dir "$JOB" --phase important
 uv run macos-data-rescue copy --job-dir "$JOB" --phase important --timeout 30
-```
-
-Then continue by value and risk:
-
-```bash
 uv run macos-data-rescue scan --job-dir "$JOB" --phase photos
 uv run macos-data-rescue copy --job-dir "$JOB" --phase photos --timeout 60
-
 uv run macos-data-rescue scan --job-dir "$JOB" --phase library
 uv run macos-data-rescue copy --job-dir "$JOB" --phase library --timeout 30
-
-uv run macos-data-rescue scan --job-dir "$JOB" --phase all
-uv run macos-data-rescue resume --job-dir "$JOB" --phase all --timeout 30
 ```
 
 Check status any time:
@@ -131,6 +169,10 @@ Do not imply that an empty or tiny copied placeholder is the complete original f
 ### macOS Metadata
 
 Extended attributes and resource forks are copied best-effort. The tool deliberately skips `com.apple.quarantine` and `com.apple.macl`. Other xattr/resource-fork failures are reported as warnings. A `copied` content status means byte-count completeness for file contents, not full metadata preservation.
+
+### Applications
+
+The `applications` phase copies `.app` bundle files from the source volume `/Applications` and `~/Applications` into `Volume Applications/` and `Home Applications/` under `DST`. Do not promise that copied apps will launch on another Mac, keep licenses, preserve activation, or replace a proper reinstall.
 
 ## Stop Or Escalate
 

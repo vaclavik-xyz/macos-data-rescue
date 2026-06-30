@@ -7,8 +7,8 @@ Build a usable private MVP CLI for macOS service data rescue. It should copy a d
 
 ```bash
 macos-data-rescue init --job-dir <dir> --source <home> --dest <dest> [--profile customer-home]
-macos-data-rescue scan --job-dir <dir> [--phase important|photos|library|all]
-macos-data-rescue copy --job-dir <dir> [--phase important|photos|library|all] [--timeout <seconds>] [--limit <n>]
+macos-data-rescue scan --job-dir <dir> [--phase visible-home|hidden-home|app-data|applications|full-home|important|photos|library|all]
+macos-data-rescue copy --job-dir <dir> [--phase visible-home|hidden-home|app-data|applications|full-home|important|photos|library|all] [--timeout <seconds>] [--limit <n>]
 macos-data-rescue resume --job-dir <dir> [same options as copy]
 macos-data-rescue status --job-dir <dir>
 macos-data-rescue report --job-dir <dir> [--format markdown|json]
@@ -16,7 +16,7 @@ macos-data-rescue report --job-dir <dir> [--format markdown|json]
 
 ## Data model
 Use SQLite manifest in `<job-dir>/manifest.sqlite` with tables for job config and files.
-Track relative path, size, mtime, kind, phase, status, attempts, error, copied bytes, timestamps.
+Track relative path, optional source path, size, mtime, kind, phase, status, attempts, error, copied bytes, timestamps.
 Statuses: `pending`, `copying`, `copied`, `failed`, `timed_out`, `skipped`.
 
 ## Copy behavior
@@ -30,10 +30,12 @@ Statuses: `pending`, `copying`, `copied`, `failed`, `timed_out`, `skipped`.
 
 ## Profiles/phases
 `customer-home` profile:
-- important: Desktop, Documents, Downloads
-- photos: Pictures, Movies, Music
-- library: selected Library data excluding caches/logs/temp
-- all: everything not excluded
+- visible-home: non-hidden top-level home data except Library, Applications, and clear cache/trash ballast
+- hidden-home: top-level dotfiles/dotfolders excluding clear cache/package/temp ballast
+- app-data: curated customer-relevant Library data excluding caches/logs/temp
+- applications: source volume `/Applications` and `~/Applications` bundles, copied into distinct destination prefixes
+- full-home: broad user home scan with safe cache/log/temp excludes
+- legacy important/photos/library/all remain supported for older jobs and scripts
 
 Default excludes: `.Trash`, `Library/Caches`, `Library/Logs`, common browser/app caches, node_modules, `.Spotlight-V100`, `.fseventsd`.
 

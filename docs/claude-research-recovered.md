@@ -23,7 +23,7 @@ The MVP now ships:
 
 - `init`, `scan`, `copy`, `resume`, `status`, `report` CLI commands.
 - SQLite manifest under the job directory.
-- Phase-based scanning: important/photos/library/all.
+- Phase-based scanning: visible-home/hidden-home/app-data/applications/full-home, with legacy important/photos/library/all compatibility.
 - Per-file child-process copy with timeout.
 - Atomic temp-file destination writes.
 - Symlink skip policy.
