@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ctypes
 import multiprocessing
 import os
 import queue
+import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +17,9 @@ CHUNK_SIZE = 1024 * 1024
 RESCUE_TMP_SUFFIX = ".rescue-tmp"
 WORK_STATUSES = ("pending", "copying", "failed", "timed_out")
 DONE_STATUSES = ("copied", "skipped")
+XATTR_NOFOLLOW = 0x0001
+XATTR_SKIP_NAMES = frozenset({"com.apple.quarantine", "com.apple.macl"})
+XATTR_WARNING_PREFIX = "extended attributes not fully preserved"
 
 
 @dataclass
@@ -74,6 +79,7 @@ def process_row(
 ) -> None:
     source = source_root / row["relative_path"]
     dest = dest_root / row["relative_path"]
+    scan_warning = without_copy_xattr_warnings(row["warning"])
     summary.processed += 1
     mark_copying(job_dir, row["id"])
     if row["kind"] == "symlink":
@@ -82,6 +88,7 @@ def process_row(
             row["id"],
             "skipped",
             error="symlink skipped to avoid following external targets",
+            warning=scan_warning,
         )
         summary.skipped += 1
         return
@@ -90,14 +97,27 @@ def process_row(
     status = str(result["status"])
     if status == "copied":
         copied_bytes = int(result.get("copied_bytes", 0))
-        mark_result(job_dir, row["id"], "copied", copied_bytes=copied_bytes)
+        mark_result(
+            job_dir,
+            row["id"],
+            "copied",
+            copied_bytes=copied_bytes,
+            warning=combine_warnings(scan_warning, result.get("warning")),
+        )
         summary.copied += 1
     elif status == "timed_out":
-        mark_result(job_dir, row["id"], "timed_out", error=str(result["error"]))
+        mark_result(job_dir, row["id"], "timed_out", error=str(result["error"]), warning=scan_warning)
         summary.timed_out += 1
     else:
         copied_bytes = int(result.get("copied_bytes", 0))
-        mark_result(job_dir, row["id"], "failed", error=str(result["error"]), copied_bytes=copied_bytes)
+        mark_result(
+            job_dir,
+            row["id"],
+            "failed",
+            error=str(result["error"]),
+            copied_bytes=copied_bytes,
+            warning=scan_warning,
+        )
         summary.failed += 1
 
 
@@ -170,11 +190,14 @@ def _copy_file_child(
                 }
             )
             return
+        xattr_warning = copy_xattrs(source, temp)
         copy_basic_metadata(source, temp)
-        copy_xattrs(source, temp)
         os.replace(temp, dest)
         fsync_directory(dest.parent)
-        result_queue.put({"status": "copied", "copied_bytes": copied_bytes})
+        result = {"status": "copied", "copied_bytes": copied_bytes}
+        if xattr_warning:
+            result["warning"] = xattr_warning
+        result_queue.put(result)
     except BaseException as exc:
         cleanup_path(temp)
         result_queue.put({"status": "failed", "error": f"{type(exc).__name__}: {exc}"})
@@ -231,18 +254,134 @@ def copy_basic_metadata(source: Path, dest: Path) -> None:
     os.utime(dest, ns=(info.st_atime_ns, info.st_mtime_ns), follow_symlinks=True)
 
 
-def copy_xattrs(source: Path, dest: Path) -> None:
-    if not all(hasattr(os, name) for name in ("listxattr", "getxattr", "setxattr")):
-        return
+class MacOSXattrOps:
+    def __init__(self) -> None:
+        libc = ctypes.CDLL("libSystem.dylib", use_errno=True)
+        self._listxattr = libc.listxattr
+        self._listxattr.argtypes = (
+            ctypes.c_char_p,
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+            ctypes.c_int,
+        )
+        self._listxattr.restype = ctypes.c_ssize_t
+        self._getxattr = libc.getxattr
+        self._getxattr.argtypes = (
+            ctypes.c_char_p,
+            ctypes.c_char_p,
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+            ctypes.c_uint32,
+            ctypes.c_int,
+        )
+        self._getxattr.restype = ctypes.c_ssize_t
+        self._setxattr = libc.setxattr
+        self._setxattr.argtypes = (
+            ctypes.c_char_p,
+            ctypes.c_char_p,
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+            ctypes.c_uint32,
+            ctypes.c_int,
+        )
+        self._setxattr.restype = ctypes.c_int
+
+    def list(self, path: Path) -> tuple[str, ...]:
+        path_bytes = os.fsencode(path)
+        size = self._listxattr(path_bytes, None, 0, XATTR_NOFOLLOW)
+        if size < 0:
+            raise_os_error(path)
+        if size == 0:
+            return ()
+        buffer = ctypes.create_string_buffer(size)
+        read = self._listxattr(path_bytes, buffer, size, XATTR_NOFOLLOW)
+        if read < 0:
+            raise_os_error(path)
+        return tuple(
+            name.decode(errors="replace")
+            for name in buffer.raw[:read].split(b"\0")
+            if name
+        )
+
+    def get(self, path: Path, name: str) -> bytes:
+        path_bytes = os.fsencode(path)
+        name_bytes = name.encode()
+        size = self._getxattr(path_bytes, name_bytes, None, 0, 0, XATTR_NOFOLLOW)
+        if size < 0:
+            raise_os_error(path)
+        if size == 0:
+            return b""
+        buffer = ctypes.create_string_buffer(size)
+        read = self._getxattr(path_bytes, name_bytes, buffer, size, 0, XATTR_NOFOLLOW)
+        if read < 0:
+            raise_os_error(path)
+        return buffer.raw[:read]
+
+    def set(self, path: Path, name: str, value: bytes) -> None:
+        value_buffer = ctypes.create_string_buffer(value, len(value)) if value else None
+        rc = self._setxattr(
+            os.fsencode(path),
+            name.encode(),
+            value_buffer,
+            len(value),
+            0,
+            XATTR_NOFOLLOW,
+        )
+        if rc != 0:
+            raise_os_error(path)
+
+
+def copy_xattrs(source: Path, dest: Path, ops=None) -> str | None:
     try:
-        names = os.listxattr(source)
+        info = source.stat(follow_symlinks=False)
     except OSError:
-        return
-    for name in names:
+        return f"{XATTR_WARNING_PREFIX}: failed to inspect source file"
+    if not stat.S_ISREG(info.st_mode):
+        return None
+    if ops is None:
         try:
-            os.setxattr(dest, name, os.getxattr(source, name))
-        except OSError:
+            ops = MacOSXattrOps()
+        except (AttributeError, OSError):
+            return None
+    try:
+        names = ops.list(source)
+    except OSError:
+        return f"{XATTR_WARNING_PREFIX}: failed to list source xattrs"
+    failures: list[str] = []
+    for name in names:
+        if name in XATTR_SKIP_NAMES:
             continue
+        try:
+            ops.set(dest, name, ops.get(source, name))
+        except OSError:
+            failures.append(name)
+    if failures:
+        return f"{XATTR_WARNING_PREFIX}: failed " + ", ".join(failures)
+    return None
+
+
+def raise_os_error(path: Path) -> None:
+    errno = ctypes.get_errno()
+    raise OSError(errno, os.strerror(errno), str(path))
+
+
+def combine_warnings(existing: object, new: object) -> str | None:
+    existing_text = str(existing) if existing else None
+    new_text = str(new) if new else None
+    if existing_text and new_text:
+        return f"{existing_text}; {new_text}"
+    return existing_text or new_text
+
+
+def without_copy_xattr_warnings(warning: object) -> str | None:
+    if not warning:
+        return None
+    parts = [
+        part
+        for part in str(warning).split("; ")
+        if not part.startswith(XATTR_WARNING_PREFIX)
+    ]
+    return "; ".join(parts) or None
 
 
 def fsync_directory(path: Path) -> None:

@@ -19,6 +19,16 @@ WARNINGS = (
         ),
     },
     {
+        "code": "metadata_best_effort",
+        "title": "macOS metadata is best-effort",
+        "message": (
+            "Extended attributes and resource forks are copied best-effort. "
+            "Quarantine and MAC labels are skipped deliberately; any xattr copy "
+            "failure is reported as a per-file warning, but copied content does "
+            "not guarantee complete metadata preservation."
+        ),
+    },
+    {
         "code": "scan_not_timeout_guarded",
         "title": "Scan is not timeout-guarded",
         "message": (

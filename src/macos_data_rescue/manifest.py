@@ -10,6 +10,7 @@ from .errors import RescueError
 
 
 MANIFEST_NAME = "manifest.sqlite"
+WARNING_UNCHANGED = object()
 
 
 @dataclass(frozen=True)
@@ -341,23 +342,39 @@ def mark_result(
     status: str,
     *,
     error: str | None = None,
+    warning=WARNING_UNCHANGED,
     copied_bytes: int = 0,
 ) -> None:
     conn = connect(job_dir)
     now = utc_now()
     try:
-        conn.execute(
-            """
-            update files
-            set status = ?,
-                error = ?,
-                copied_bytes = ?,
-                finished_at = ?,
-                updated_at = ?
-            where id = ?
-            """,
-            (status, error, copied_bytes, now, now, file_id),
-        )
+        if warning is WARNING_UNCHANGED:
+            conn.execute(
+                """
+                update files
+                set status = ?,
+                    error = ?,
+                    copied_bytes = ?,
+                    finished_at = ?,
+                    updated_at = ?
+                where id = ?
+                """,
+                (status, error, copied_bytes, now, now, file_id),
+            )
+        else:
+            conn.execute(
+                """
+                update files
+                set status = ?,
+                    error = ?,
+                    warning = ?,
+                    copied_bytes = ?,
+                    finished_at = ?,
+                    updated_at = ?
+                where id = ?
+                """,
+                (status, error, warning, copied_bytes, now, now, file_id),
+            )
         conn.commit()
     finally:
         conn.close()

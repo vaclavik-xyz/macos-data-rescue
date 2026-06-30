@@ -16,6 +16,7 @@ This document tracks the MVP that was implemented and the next hardening slices.
 - `status` and `report --format markdown|json`.
 - Regression test suite covering scan/excludes, copy completeness, resume, timeout/failure continuation, symlink safety, temp cleanup/collision, streamed manifest selection, source write guards, safe metadata copy, exit codes, and limit starvation.
 - Reports include general warnings plus per-file suspected iCloud dataless placeholder markers in Markdown and JSON, including macOS `SF_DATALESS` flag detection.
+- macOS extended attributes and resource forks are copied best-effort through libSystem; `com.apple.quarantine` and `com.apple.macl` are skipped, and xattr failures become visible report warnings instead of failing content rescue.
 
 ## Verification gates
 
@@ -39,10 +40,9 @@ uv run macos-data-rescue report --job-dir "$workdir/job" --format json
 
 ## Post-MVP hardening backlog
 
-1. Add macOS extended attributes/resource fork preservation via `ctypes`/libSystem instead of Python stdlib xattr APIs, which are not available on this macOS Python.
-2. Add destination free-space preflight with a conservative operator-facing warning before long copy runs.
-3. Add timeout-guarded or interrupt-friendly scanning for severely failing disks where `os.walk`/`stat` can hang before copy starts.
-4. Add an optional `--exclude-from` file for technician-maintained skip patterns.
-5. Add `--retry-failed/--no-retry-failed` policy controls.
-6. Add CSV report output for CRM import if useful.
-7. Add an SSH orchestration wrapper for service Macs once the CLI stabilizes.
+1. Add destination free-space preflight with a conservative operator-facing warning before long copy runs.
+2. Add timeout-guarded or interrupt-friendly scanning for severely failing disks where `os.walk`/`stat` can hang before copy starts.
+3. Add an optional `--exclude-from` file for technician-maintained skip patterns.
+4. Add `--retry-failed/--no-retry-failed` policy controls.
+5. Add CSV report output for CRM import if useful.
+6. Add an SSH orchestration wrapper for service Macs once the CLI stabilizes.

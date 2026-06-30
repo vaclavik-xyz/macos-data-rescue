@@ -15,7 +15,7 @@ Recovered after the original Claude Code pane was closed. Source logs remain und
 - Symlinks should be skipped rather than followed, because following absolute symlinks can copy unrelated files from the technician host.
 - `--limit` should count files actually needing work, not already matching copied rows; otherwise resume can starve later files.
 - Manifest reads must not hold a SQLite cursor open while copy writes update statuses; batch reads avoid read/write self-locks on older/non-WAL manifests.
-- On this macOS Python, `os.listxattr`, `os.getxattr`, and `os.setxattr` are absent, so stdlib xattr preservation is effectively a no-op. Proper macOS metadata support needs a future `ctypes`/libSystem implementation.
+- On this macOS Python, `os.listxattr`, `os.getxattr`, and `os.setxattr` are absent, so xattr/resource fork preservation uses a native `ctypes`/libSystem backend instead of Python stdlib xattr calls.
 
 ## Resulting shipped contract
 
@@ -29,11 +29,11 @@ The MVP now ships:
 - Symlink skip policy.
 - Resume for failed/timed-out/copying rows and copied rows whose destination is missing.
 - Markdown and JSON reports.
-- Regression tests for timeout/failure continuation, symlink safety, temp collision, streamed/batched manifest selection, and resume limit starvation.
+- Best-effort macOS xattr/resource fork copy with deliberate `com.apple.quarantine` and `com.apple.macl` skips plus visible xattr failure warnings.
+- Regression tests for timeout/failure continuation, symlink safety, temp collision, streamed/batched manifest selection, xattr preservation, and resume limit starvation.
 
 ## Remaining hardening suggested by Claude research
 
-1. Implement macOS xattr/resource fork preservation via `ctypes` and libSystem.
-2. Add a guard preventing `--dest` from being nested inside `--source`.
-3. Sweep stale `*.rescue-tmp` files at the start of `copy`/`resume`.
-4. Consider explicit retry policy flags for failed/timed-out rows after the MVP stabilizes.
+1. Add destination free-space preflight with a conservative operator-facing warning before long copy runs.
+2. Add timeout-guarded or interrupt-friendly scanning for severely failing disks where `os.walk`/`stat` can hang before copy starts.
+3. Consider explicit retry policy flags for failed/timed-out rows after the MVP stabilizes.

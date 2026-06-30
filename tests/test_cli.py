@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from shutil import which
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -266,6 +267,146 @@ def test_copy_does_not_make_destination_immutable_before_publish(tmp_path: Path)
     assert file_rows(job_dir)["Desktop/locked.txt"]["status"] == "copied"
     if hasattr(os.stat(copied), "st_flags"):
         assert not (os.stat(copied).st_flags & stat.UF_IMMUTABLE)
+
+
+def test_xattr_copy_helper_reads_source_and_writes_destination_only(tmp_path: Path) -> None:
+    from macos_data_rescue import copier
+
+    class FakeXattrOps:
+        def __init__(self) -> None:
+            self.reads: list[Path] = []
+            self.writes: list[tuple[Path, str, bytes]] = []
+
+        def list(self, path: Path) -> tuple[str, ...]:
+            self.reads.append(path)
+            return ("user.keep", "com.apple.ResourceFork", "com.apple.quarantine", "com.apple.macl")
+
+        def get(self, path: Path, name: str) -> bytes:
+            self.reads.append(path)
+            return f"value:{name}".encode()
+
+        def set(self, path: Path, name: str, value: bytes) -> None:
+            self.writes.append((path, name, value))
+
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+    write_file(source, b"source")
+    write_file(dest, b"dest")
+    ops = FakeXattrOps()
+
+    warning = copier.copy_xattrs(source, dest, ops=ops)
+
+    assert warning is None
+    assert ops.reads == [source, source, source]
+    assert ops.writes == [
+        (dest, "user.keep", b"value:user.keep"),
+        (dest, "com.apple.ResourceFork", b"value:com.apple.ResourceFork"),
+    ]
+
+
+def test_xattr_copy_failure_marks_per_file_warning_without_failing_content(tmp_path: Path, monkeypatch) -> None:
+    from macos_data_rescue import copier
+
+    def fake_copy_one_with_timeout(source: Path, dest: Path, timeout: float, *, expected_size: int) -> dict[str, object]:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(source.read_bytes())
+        return {
+            "status": "copied",
+            "copied_bytes": expected_size,
+            "warning": "extended attributes not fully preserved: failed user.test",
+        }
+
+    monkeypatch.setattr(copier, "copy_one_with_timeout", fake_copy_one_with_timeout)
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+
+    result = copier.copy_job(job_dir, phase="important", timeout=2)
+    payload = json.loads(run_cli("report", "--job-dir", str(job_dir), "--format", "json").stdout)
+    markdown = run_cli("report", "--job-dir", str(job_dir), "--format", "markdown").stdout
+
+    assert result.copied == 1
+    assert result.failed == 0
+    assert (dest_dir / "Desktop" / "invoice.txt").read_bytes() == b"desktop"
+    assert payload["files"][0]["warning"] == "extended attributes not fully preserved: failed user.test"
+    assert "extended attributes not fully preserved: failed user.test" in markdown
+
+
+def test_xattr_copy_warning_is_scoped_to_current_attempt(tmp_path: Path, monkeypatch) -> None:
+    from macos_data_rescue import copier
+
+    outcomes = [
+        {
+            "status": "copied",
+            "warning": "extended attributes not fully preserved: failed user.test",
+        },
+        {"status": "failed", "error": "simulated retry failure"},
+        {"status": "copied"},
+    ]
+
+    def fake_copy_one_with_timeout(source: Path, dest: Path, timeout: float, *, expected_size: int) -> dict[str, object]:
+        outcome = outcomes.pop(0)
+        if outcome["status"] == "copied":
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(source.read_bytes())
+            return {"copied_bytes": expected_size, **outcome}
+        return {**outcome, "copied_bytes": 0}
+
+    monkeypatch.setattr(copier, "copy_one_with_timeout", fake_copy_one_with_timeout)
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+
+    copier.copy_job(job_dir, phase="important", timeout=2)
+    assert file_rows(job_dir)["Desktop/invoice.txt"]["warning"] == (
+        "extended attributes not fully preserved: failed user.test"
+    )
+
+    (dest_dir / "Desktop" / "invoice.txt").unlink()
+    copier.copy_job(job_dir, phase="important", timeout=2)
+    failed_row = file_rows(job_dir)["Desktop/invoice.txt"]
+    assert failed_row["status"] == "failed"
+    assert failed_row["warning"] is None
+
+    copier.copy_job(job_dir, phase="important", timeout=2)
+    copied_row = file_rows(job_dir)["Desktop/invoice.txt"]
+    assert copied_row["status"] == "copied"
+    assert copied_row["warning"] is None
+
+
+def test_xattr_cli_preserves_regular_attribute_when_available(tmp_path: Path) -> None:
+    if which("xattr") is None:
+        import pytest
+
+        pytest.skip("xattr CLI not available")
+
+    source = tmp_path / "source-home"
+    source_file = source / "Desktop" / "invoice.txt"
+    write_file(source_file, b"desktop")
+    subprocess.run(
+        ["xattr", "-w", "user.macos_data_rescue_test", "hello", str(source_file)],
+        check=True,
+    )
+    os.chmod(source_file, 0o400)
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+    dest_file = dest_dir / "Desktop" / "invoice.txt"
+    result = subprocess.run(
+        ["xattr", "-p", "user.macos_data_rescue_test", str(dest_file)],
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    first_row = file_rows(job_dir)["Desktop/invoice.txt"]
+    resume = run_cli("resume", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+    second_row = file_rows(job_dir)["Desktop/invoice.txt"]
+
+    assert result.stdout.strip() == "hello"
+    assert oct(dest_file.stat().st_mode & 0o777) == "0o400"
+    assert "copied=0" in resume.stdout
+    assert "skipped=1" in resume.stdout
+    assert second_row["attempts"] == first_row["attempts"]
 
 
 def test_resume_skips_already_copied_files_with_matching_source_metadata(tmp_path: Path) -> None:

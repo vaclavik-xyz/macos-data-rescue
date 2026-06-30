@@ -13,6 +13,7 @@ The goal is simple: **one bad file must not stop the whole rescue**. The tool sc
 - Symlinks are skipped instead of followed, to avoid copying unrelated technician-host paths.
 - Destination writes use unique temp files in the destination directory, then atomic `os.replace`.
 - A file is marked `copied` only after the worker copies the expected byte count from the manifest.
+- macOS extended attributes and resource forks are copied best-effort with a native libSystem xattr backend.
 - `copy` / `resume` clean stale internal `*.rescue-tmp` files in relevant destination directories before copying.
 - `status` prints manifest counts.
 - `report` prints Markdown or JSON suitable for service notes, including per-file suspected iCloud placeholder warnings.
@@ -87,7 +88,7 @@ Default excludes include `.Trash`, `Library/Caches`, `Library/Logs`, `node_modul
 
 - Source data is never modified, and `init` refuses a job directory or destination inside the source tree.
 - Empty directories are not recreated in the MVP.
-- macOS extended attributes/resource forks are not reliably preserved by the current Python stdlib path on this macOS; a native xattr backend is planned.
+- macOS extended attributes/resource forks are preserved best-effort through libSystem. The copier deliberately skips `com.apple.quarantine` and `com.apple.macl`; other xattr failures are reported as per-file warnings. `copied` guarantees content byte-count completeness, not full metadata preservation.
 - **Copy completeness:** `copied` means the worker copied the same byte count that was recorded in the manifest for that file. If the worker reads fewer bytes, the file is marked `failed`, any partial temp output is discarded, and JSON/Markdown reports show the partial byte count.
 - **iCloud / Optimize Mac Storage warning:** files offloaded by iCloud Drive or Photos may exist on the mounted disk only as dataless placeholders. Over Share Disk / Target Disk Mode they can copy as empty or tiny files and cannot be downloaded from the mounted volume. The report marks specific files as `suspected iCloud dataless placeholder` when the macOS dataless file flag or conservative path/xattr/size heuristics match; the customer must be told that those files may not have been physically present on disk, and recovery may require the live signed-in Mac or iCloud.com/export.
 - Per-file timeouts protect the copy phase. The scan phase still walks/stats the mounted source directly, so a severe disk/kernel I/O hang can still stall scan.
