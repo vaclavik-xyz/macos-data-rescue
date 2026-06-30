@@ -228,6 +228,56 @@ def test_scan_phase_important_only_records_high_value_dirs(tmp_path: Path) -> No
     assert {row["phase"] for row in rows.values()} == {"important"}
 
 
+def test_scan_phase_visible_home_records_non_hidden_home_without_library_or_dot_items(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    write_file(source / "Pictures" / "photo.jpg", b"jpeg")
+    write_file(source / "Projects" / "client" / "brief.txt", b"brief")
+    write_file(source / "Applications" / "UserOnly.app" / "Contents" / "Info.plist", b"app")
+    write_file(source / "Library" / "Mail" / "mailbox", b"mail")
+    write_file(source / "Caches" / "blob", b"cache")
+    write_file(source / "Temp" / "scratch", b"temp")
+    write_file(source / ".ssh" / "config", b"ssh")
+    write_file(source / ".zshrc", b"zsh")
+    write_file(source / ".Trash" / "old.txt", b"trash")
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "visible-home")
+
+    rows = file_rows(job_dir)
+    assert sorted(rows) == [
+        "Desktop/invoice.txt",
+        "Pictures/photo.jpg",
+        "Projects/client/brief.txt",
+    ]
+    assert {row["phase"] for row in rows.values()} == {"visible-home"}
+
+
+def test_scan_phase_hidden_home_records_dot_items_without_cache_ballast(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / ".ssh" / "config", b"ssh")
+    write_file(source / ".config" / "app" / "settings.json", b"{}")
+    write_file(source / ".zshrc", b"zsh")
+    write_file(source / ".cache" / "browser" / "cache.bin", b"cache")
+    write_file(source / ".npm" / "_cacache" / "blob", b"cache")
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "hidden-home")
+
+    rows = file_rows(job_dir)
+    assert sorted(rows) == [
+        ".config/app/settings.json",
+        ".ssh/config",
+        ".zshrc",
+    ]
+    assert {row["phase"] for row in rows.values()} == {"hidden-home"}
+
+
 def test_scan_phase_photos_adds_rows_without_duplicating_existing_manifest(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     write_file(source / "Desktop" / "invoice.txt", b"desktop")

@@ -11,7 +11,47 @@ from .manifest import ScannedFile, load_config, migrate_manifest, upsert_scanned
 
 IMPORTANT_DIRS = {"Desktop", "Documents", "Downloads"}
 PHOTO_DIRS = {"Pictures", "Movies", "Music"}
-SCAN_PHASES = ("important", "photos", "library", "all")
+CUSTOMER_PHASES = ("visible-home", "hidden-home")
+LEGACY_PHASES = ("important", "photos", "library", "all")
+SCAN_PHASES = CUSTOMER_PHASES + LEGACY_PHASES
+CUSTOMER_HOME_TOP_LEVEL_EXCLUDES = {
+    "Cache",
+    "Caches",
+    "Temp",
+    ".cache",
+    ".npm",
+    ".pnpm-store",
+    ".Trash",
+    ".yarn",
+    "Logs",
+    "tmp",
+}
+VISIBLE_HOME_TOP_LEVEL_EXCLUDES = CUSTOMER_HOME_TOP_LEVEL_EXCLUDES | {
+    ".Spotlight-V100",
+    ".fseventsd",
+    "Applications",
+    "Library",
+}
+HIDDEN_HOME_TOP_LEVEL_EXCLUDES = {
+    ".Trash",
+    ".cache",
+    ".npm",
+    ".pnpm-store",
+    ".yarn",
+    ".gradle",
+    ".Spotlight-V100",
+    ".fseventsd",
+}
+HIDDEN_HOME_EXCLUDE_PARTS = {
+    "node_modules",
+    "__pycache__",
+    "Cache",
+    "Caches",
+    "cache",
+    "caches",
+    "tmp",
+    "Temp",
+}
 TOP_LEVEL_EXCLUDES = {".Trash", ".Spotlight-V100", ".fseventsd", "node_modules"}
 EXCLUDED_PARTS = {"node_modules", "__pycache__"}
 LIBRARY_EXCLUDE_PREFIXES = (
@@ -51,11 +91,11 @@ def scan_job(job_dir: Path, *, phase: str = "all") -> int:
 
 def iter_source_files(source: Path, *, phase: str = "all"):
     for scan_root in scan_roots(source, phase):
-        yield from iter_tree(source, scan_root)
+        yield from iter_tree(source, scan_root, phase)
 
 
 def scan_roots(source: Path, phase: str) -> tuple[Path, ...]:
-    if phase == "all":
+    if phase in {"all", "visible-home", "hidden-home"}:
         return (source,)
     if phase == "important":
         names = IMPORTANT_DIRS
@@ -78,7 +118,7 @@ def scan_roots(source: Path, phase: str) -> tuple[Path, ...]:
     return tuple(roots)
 
 
-def iter_tree(source: Path, scan_root: Path):
+def iter_tree(source: Path, scan_root: Path, phase: str):
     for root, dirs, files in os.walk(scan_root, topdown=True, followlinks=False):
         root_path = Path(root)
         dirs.sort()
@@ -86,14 +126,14 @@ def iter_tree(source: Path, scan_root: Path):
         kept_dirs = []
         for dirname in dirs:
             rel_parts = relative_parts(source, root_path / dirname)
-            if not is_excluded(rel_parts):
+            if should_descend(rel_parts, phase):
                 kept_dirs.append(dirname)
         dirs[:] = kept_dirs
 
         for filename in files:
             path = root_path / filename
             rel_parts = relative_parts(source, path)
-            if is_excluded(rel_parts):
+            if not should_include_file(rel_parts, phase):
                 continue
             try:
                 info = path.stat(follow_symlinks=False)
@@ -105,7 +145,7 @@ def iter_tree(source: Path, scan_root: Path):
                 mtime_ns=info.st_mtime_ns,
                 mode=stat.S_IMODE(info.st_mode),
                 kind=file_kind(info.st_mode),
-                phase=phase_for(rel_parts),
+                phase=manifest_phase_for(rel_parts, phase),
                 warning=warning_for(path, rel_parts, info),
             )
 
@@ -127,6 +167,63 @@ def is_excluded(parts: tuple[str, ...]) -> bool:
     if parts[0] == "Library" and any(part in LIBRARY_EXCLUDE_PARTS for part in parts[1:]):
         return True
     return False
+
+
+def should_descend(parts: tuple[str, ...], phase: str) -> bool:
+    if is_excluded(parts):
+        return False
+    if phase in CUSTOMER_PHASES and is_customer_home_ballast(parts):
+        return False
+    if phase == "visible-home":
+        return is_visible_home_path(parts)
+    if phase == "hidden-home":
+        return is_hidden_home_path(parts)
+    if phase == "full-home":
+        return True
+    return True
+
+
+def should_include_file(parts: tuple[str, ...], phase: str) -> bool:
+    if is_excluded(parts):
+        return False
+    if phase in CUSTOMER_PHASES and is_customer_home_ballast(parts):
+        return False
+    if phase == "visible-home":
+        return is_visible_home_path(parts)
+    if phase == "hidden-home":
+        return is_hidden_home_path(parts)
+    if phase == "full-home":
+        return True
+    return True
+
+
+def is_visible_home_path(parts: tuple[str, ...]) -> bool:
+    if not parts:
+        return False
+    first = parts[0]
+    return not first.startswith(".") and first not in VISIBLE_HOME_TOP_LEVEL_EXCLUDES
+
+
+def is_customer_home_ballast(parts: tuple[str, ...]) -> bool:
+    if not parts:
+        return False
+    first = parts[0]
+    return first in CUSTOMER_HOME_TOP_LEVEL_EXCLUDES
+
+
+def is_hidden_home_path(parts: tuple[str, ...]) -> bool:
+    if not parts:
+        return False
+    first = parts[0]
+    if not first.startswith(".") or first in HIDDEN_HOME_TOP_LEVEL_EXCLUDES:
+        return False
+    return not any(part in HIDDEN_HOME_EXCLUDE_PARTS for part in parts)
+
+
+def manifest_phase_for(parts: tuple[str, ...], requested_phase: str) -> str:
+    if requested_phase in CUSTOMER_PHASES:
+        return requested_phase
+    return phase_for(parts)
 
 
 def phase_for(parts: tuple[str, ...]) -> str:
