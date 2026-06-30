@@ -13,6 +13,8 @@ from .manifest import iter_selected_files, load_config, mark_copying, mark_resul
 
 
 CHUNK_SIZE = 1024 * 1024
+WORK_STATUSES = ("pending", "copying", "failed", "timed_out")
+DONE_STATUSES = ("copied", "skipped")
 
 
 @dataclass
@@ -34,46 +36,70 @@ def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = N
     config = load_config(job_dir)
     summary = CopySummary()
     attempted = 0
-    for row in iter_selected_files(job_dir, phase):
-        source = config.source / row["relative_path"]
-        dest = config.dest / row["relative_path"]
-        if row["status"] == "copied" and destination_matches(dest, row):
-            summary.skipped += 1
-            continue
-        if row["status"] == "skipped":
-            summary.skipped += 1
-            continue
-
+    handled_ids: set[int] = set()
+    for row in iter_selected_files(job_dir, phase, statuses=WORK_STATUSES):
         if limit is not None and attempted >= limit:
             break
-
+        process_row(job_dir, config.source, config.dest, row, timeout, summary)
+        handled_ids.add(int(row["id"]))
         attempted += 1
-        summary.processed += 1
 
-        mark_copying(job_dir, row["id"])
-        if row["kind"] == "symlink":
-            mark_result(
-                job_dir,
-                row["id"],
-                "skipped",
-                error="symlink skipped to avoid following external targets",
-            )
-            summary.skipped += 1
+    if limit is not None and attempted >= limit:
+        return summary
+
+    done_seen = 0
+    for row in iter_selected_files(job_dir, phase, statuses=DONE_STATUSES):
+        if int(row["id"]) in handled_ids:
             continue
-
-        result = copy_one_with_timeout(source, dest, timeout)
-        status = str(result["status"])
-        if status == "copied":
-            copied_bytes = int(result.get("copied_bytes", 0))
-            mark_result(job_dir, row["id"], "copied", copied_bytes=copied_bytes)
-            summary.copied += 1
-        elif status == "timed_out":
-            mark_result(job_dir, row["id"], "timed_out", error=str(result["error"]))
-            summary.timed_out += 1
-        else:
-            mark_result(job_dir, row["id"], "failed", error=str(result["error"]))
-            summary.failed += 1
+        dest = config.dest / row["relative_path"]
+        if row["status"] == "skipped" or destination_matches(dest, row):
+            summary.skipped += 1
+            done_seen += 1
+            if limit is not None and attempted + done_seen >= limit:
+                break
+            continue
+        if limit is not None and attempted >= limit:
+            break
+        process_row(job_dir, config.source, config.dest, row, timeout, summary)
+        handled_ids.add(int(row["id"]))
+        attempted += 1
     return summary
+
+
+def process_row(
+    job_dir: Path,
+    source_root: Path,
+    dest_root: Path,
+    row: Any,
+    timeout: float,
+    summary: CopySummary,
+) -> None:
+    source = source_root / row["relative_path"]
+    dest = dest_root / row["relative_path"]
+    summary.processed += 1
+    mark_copying(job_dir, row["id"])
+    if row["kind"] == "symlink":
+        mark_result(
+            job_dir,
+            row["id"],
+            "skipped",
+            error="symlink skipped to avoid following external targets",
+        )
+        summary.skipped += 1
+        return
+
+    result = copy_one_with_timeout(source, dest, timeout)
+    status = str(result["status"])
+    if status == "copied":
+        copied_bytes = int(result.get("copied_bytes", 0))
+        mark_result(job_dir, row["id"], "copied", copied_bytes=copied_bytes)
+        summary.copied += 1
+    elif status == "timed_out":
+        mark_result(job_dir, row["id"], "timed_out", error=str(result["error"]))
+        summary.timed_out += 1
+    else:
+        mark_result(job_dir, row["id"], "failed", error=str(result["error"]))
+        summary.failed += 1
 
 
 def destination_matches(dest: Path, row: Any) -> bool:

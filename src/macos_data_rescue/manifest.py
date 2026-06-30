@@ -211,35 +211,67 @@ def upsert_scanned_files(job_dir: Path, files: Iterable[ScannedFile]) -> int:
 
 
 def selected_files(job_dir: Path, phase: str, limit: int | None = None) -> list[sqlite3.Row]:
-    rows = iter_selected_files(job_dir, phase)
-    if limit is None:
-        return list(rows)
-    selected = []
-    for row in rows:
-        selected.append(row)
-        if len(selected) >= limit:
+    return list(iter_selected_files(job_dir, phase, limit=limit))
+
+
+def iter_selected_files(
+    job_dir: Path,
+    phase: str,
+    *,
+    statuses: tuple[str, ...] | None = None,
+    limit: int | None = None,
+    batch_size: int = 100,
+):
+    yielded = 0
+    last_path: str | None = None
+    while limit is None or yielded < limit:
+        chunk_limit = batch_size if limit is None else min(batch_size, limit - yielded)
+        rows = fetch_selected_batch(
+            job_dir,
+            phase,
+            statuses=statuses,
+            last_path=last_path,
+            limit=chunk_limit,
+        )
+        if not rows:
             break
-    return selected
+        last_path = rows[-1]["relative_path"]
+        yielded += len(rows)
+        yield from rows
 
 
-def iter_selected_files(job_dir: Path, phase: str):
+def fetch_selected_batch(
+    job_dir: Path,
+    phase: str,
+    *,
+    statuses: tuple[str, ...] | None,
+    last_path: str | None,
+    limit: int,
+) -> list[sqlite3.Row]:
     conn = connect(job_dir)
     try:
+        where_parts: list[str] = []
         params: list[object] = []
-        where = ""
         if phase != "all":
-            where = "where phase = ?"
+            where_parts.append("phase = ?")
             params.append(phase)
+        if statuses is not None:
+            placeholders = ", ".join("?" for _ in statuses)
+            where_parts.append(f"status in ({placeholders})")
+            params.extend(statuses)
+        if last_path is not None:
+            where_parts.append("relative_path > ?")
+            params.append(last_path)
+        where = f"where {' and '.join(where_parts)}" if where_parts else ""
+        params.append(limit)
         sql = f"""
             select *
             from files
             {where}
-            order by
-                case when status in ('copied', 'skipped') then 1 else 0 end,
-                relative_path
+            order by relative_path
+            limit ?
         """
-        for row in conn.execute(sql, params):
-            yield row
+        return conn.execute(sql, params).fetchall()
     finally:
         conn.close()
 

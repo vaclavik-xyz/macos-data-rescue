@@ -116,6 +116,17 @@ def test_resume_skips_already_copied_files_with_matching_source_metadata(tmp_pat
     assert "skipped=1" in result.stdout
 
 
+def test_copy_summary_does_not_count_freshly_copied_files_as_skipped(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+
+    result = run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+
+    assert "copied=1" in result.stdout
+    assert "skipped=0" in result.stdout
+
+
 def test_timeout_and_failure_mark_file_and_continue_to_next_file(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     (source / "Desktop").mkdir(parents=True)
@@ -193,6 +204,25 @@ def test_manifest_selected_files_are_streamed(tmp_path: Path) -> None:
     assert not isinstance(rows, list)
     iterator = iter(rows)
     assert next(iterator)["relative_path"] == "Desktop/a.txt"
+
+
+def test_limited_copy_does_not_lock_rollback_journal_manifest(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "a.txt", b"a")
+    write_file(source / "Desktop" / "b.txt", b"b")
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+    conn = sqlite3.connect(job_dir / "manifest.sqlite")
+    try:
+        journal_mode = conn.execute("pragma journal_mode = delete").fetchone()[0]
+    finally:
+        conn.close()
+    assert journal_mode == "delete"
+
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--limit", "1")
+
+    rows = file_rows(job_dir)
+    assert rows["Desktop/a.txt"]["status"] == "copied"
+    assert rows["Desktop/b.txt"]["status"] == "pending"
 
 
 def test_report_outputs_markdown_and_json_summary(tmp_path: Path) -> None:
