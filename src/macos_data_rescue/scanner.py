@@ -11,7 +11,7 @@ from .manifest import ScannedFile, load_config, migrate_manifest, upsert_scanned
 
 IMPORTANT_DIRS = {"Desktop", "Documents", "Downloads"}
 PHOTO_DIRS = {"Pictures", "Movies", "Music"}
-CUSTOMER_PHASES = ("visible-home", "hidden-home", "app-data", "full-home")
+CUSTOMER_PHASES = ("visible-home", "hidden-home", "app-data", "applications", "full-home")
 LEGACY_PHASES = ("important", "photos", "library", "all")
 SCAN_PHASES = CUSTOMER_PHASES + LEGACY_PHASES
 APP_DATA_LIBRARY_PREFIXES = (
@@ -101,6 +101,10 @@ def scan_job(job_dir: Path, *, phase: str = "all") -> int:
 
 
 def iter_source_files(source: Path, *, phase: str = "all"):
+    if phase == "applications":
+        for scan_root, dest_prefix in application_scan_roots(source):
+            yield from iter_application_tree(scan_root, dest_prefix)
+        return
     for scan_root in scan_roots(source, phase):
         yield from iter_tree(source, scan_root, phase)
 
@@ -132,6 +136,27 @@ def scan_roots(source: Path, phase: str) -> tuple[Path, ...]:
     return tuple(roots)
 
 
+def application_scan_roots(source: Path) -> tuple[tuple[Path, str], ...]:
+    roots: list[tuple[Path, str]] = []
+    volume_applications = volume_root_for_home(source) / "Applications"
+    user_applications = source / "Applications"
+    if is_real_directory(volume_applications):
+        roots.append((volume_applications, "Volume Applications"))
+    if is_real_directory(user_applications):
+        roots.append((user_applications, "Home Applications"))
+    return tuple(roots)
+
+
+def volume_root_for_home(source: Path) -> Path:
+    parts = source.parts
+    users_indexes = [index for index, part in enumerate(parts) if part == "Users"]
+    if users_indexes:
+        users_index = users_indexes[-1]
+        if users_index > 0 and users_index + 1 < len(parts):
+            return Path(*parts[:users_index])
+    return source.parent
+
+
 def iter_tree(source: Path, scan_root: Path, phase: str):
     for root, dirs, files in os.walk(scan_root, topdown=True, followlinks=False):
         root_path = Path(root)
@@ -160,6 +185,31 @@ def iter_tree(source: Path, scan_root: Path, phase: str):
                 mode=stat.S_IMODE(info.st_mode),
                 kind=file_kind(info.st_mode),
                 phase=manifest_phase_for(rel_parts, phase),
+                warning=warning_for(path, rel_parts, info),
+            )
+
+
+def iter_application_tree(scan_root: Path, dest_prefix: str):
+    for root, dirs, files in os.walk(scan_root, topdown=True, followlinks=False):
+        root_path = Path(root)
+        dirs.sort()
+        files.sort()
+        for filename in files:
+            path = root_path / filename
+            try:
+                info = path.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            rel = Path(dest_prefix) / path.relative_to(scan_root)
+            rel_parts = rel.parts
+            yield ScannedFile(
+                relative_path=str(rel).replace(os.sep, "/"),
+                source_path=str(path),
+                size=info.st_size,
+                mtime_ns=info.st_mtime_ns,
+                mode=stat.S_IMODE(info.st_mode),
+                kind=file_kind(info.st_mode),
+                phase="applications",
                 warning=warning_for(path, rel_parts, info),
             )
 

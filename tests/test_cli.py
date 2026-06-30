@@ -413,6 +413,224 @@ def test_scan_without_phase_keeps_legacy_all_classification(tmp_path: Path) -> N
     assert rows["Projects/notes.txt"]["phase"] == "all"
 
 
+def test_scan_and_copy_applications_reads_volume_applications_outside_home(tmp_path: Path) -> None:
+    volume = tmp_path / "Mounted Air"
+    source = volume / "Users" / "dan"
+    volume_app = volume / "Applications" / "Legacy.app" / "Contents" / "Info.plist"
+    user_app = source / "Applications" / "UserOnly.app" / "Contents" / "Info.plist"
+    write_file(volume_app, b"volume app")
+    write_file(user_app, b"user app")
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "applications", "--timeout", "2")
+
+    rows = file_rows(job_dir)
+    assert sorted(rows) == [
+        "Home Applications/UserOnly.app/Contents/Info.plist",
+        "Volume Applications/Legacy.app/Contents/Info.plist",
+    ]
+    assert {row["phase"] for row in rows.values()} == {"applications"}
+    assert (dest_dir / "Volume Applications" / "Legacy.app" / "Contents" / "Info.plist").read_bytes() == b"volume app"
+    assert (dest_dir / "Home Applications" / "UserOnly.app" / "Contents" / "Info.plist").read_bytes() == b"user app"
+
+
+def test_scan_phase_applications_does_not_follow_symlinked_application_roots(tmp_path: Path) -> None:
+    volume = tmp_path / "Mounted Air"
+    source = volume / "Users" / "dan"
+    outside = tmp_path / "outside-apps"
+    write_file(outside / "External.app" / "Contents" / "Info.plist", b"outside")
+    source.mkdir(parents=True)
+    os.symlink(outside, volume / "Applications")
+    os.symlink(outside, source / "Applications")
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
+
+    assert file_rows(job_dir) == {}
+
+
+def test_scan_phase_applications_uses_last_users_segment_for_volume_root(tmp_path: Path) -> None:
+    host_like_root = tmp_path / "Users" / "admin"
+    volume = host_like_root / "Mounted Air"
+    source = volume / "Users" / "dan"
+    wrong_host_app = tmp_path / "Applications" / "Host.app" / "Contents" / "Info.plist"
+    correct_volume_app = volume / "Applications" / "Legacy.app" / "Contents" / "Info.plist"
+    write_file(wrong_host_app, b"host app")
+    write_file(correct_volume_app, b"volume app")
+    source.mkdir(parents=True)
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
+
+    rows = file_rows(job_dir)
+    assert sorted(rows) == ["Volume Applications/Legacy.app/Contents/Info.plist"]
+
+
+def test_applications_json_report_includes_source_path(tmp_path: Path) -> None:
+    volume = tmp_path / "Mounted Air"
+    source = volume / "Users" / "dan"
+    app_file = volume / "Applications" / "Legacy.app" / "Contents" / "Info.plist"
+    write_file(app_file, b"volume app")
+    source.mkdir(parents=True)
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
+
+    payload = json.loads(run_cli("report", "--job-dir", str(job_dir), "--format", "json").stdout)
+
+    [item] = payload["files"]
+    assert item["relative_path"] == "Volume Applications/Legacy.app/Contents/Info.plist"
+    assert item["source_path"] == str(app_file)
+
+
+def test_scan_and_copy_applications_preserves_bundle_directories_named_cache(tmp_path: Path) -> None:
+    volume = tmp_path / "Mounted Air"
+    source = volume / "Users" / "dan"
+    app_file = volume / "Applications" / "Legacy.app" / "Contents" / "Caches" / "keep.dat"
+    write_file(app_file, b"bundle data")
+    source.mkdir(parents=True)
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "applications", "--timeout", "2")
+
+    assert (
+        dest_dir / "Volume Applications" / "Legacy.app" / "Contents" / "Caches" / "keep.dat"
+    ).read_bytes() == b"bundle data"
+
+
+def test_copy_rejects_manifest_source_path_outside_application_roots(tmp_path: Path) -> None:
+    volume = tmp_path / "Mounted Air"
+    source = volume / "Users" / "dan"
+    app_file = volume / "Applications" / "Legacy.app" / "Contents" / "Info.plist"
+    outside = tmp_path / "outside.txt"
+    write_file(app_file, b"volume app")
+    write_file(outside, b"outside")
+    source.mkdir(parents=True)
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
+    conn = sqlite3.connect(job_dir / "manifest.sqlite")
+    try:
+        conn.execute("update files set source_path = ?", (str(outside),))
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = run_cli("copy", "--job-dir", str(job_dir), "--phase", "applications", "--timeout", "2")
+    row = file_rows(job_dir)["Volume Applications/Legacy.app/Contents/Info.plist"]
+
+    assert "failed=1" in result.stdout
+    assert row["status"] == "failed"
+    assert "outside allowed application roots" in row["error"]
+    assert not (dest_dir / "Volume Applications" / "Legacy.app" / "Contents" / "Info.plist").exists()
+
+
+def test_copy_rejects_manifest_source_path_under_symlinked_user_applications(tmp_path: Path) -> None:
+    volume = tmp_path / "Mounted Air"
+    source = volume / "Users" / "dan"
+    app_file = volume / "Applications" / "Legacy.app" / "Contents" / "Info.plist"
+    outside_app = tmp_path / "outside-apps" / "External.app" / "Contents" / "Info.plist"
+    write_file(app_file, b"volume app")
+    write_file(outside_app, b"outside")
+    source.mkdir(parents=True, exist_ok=True)
+    os.symlink(tmp_path / "outside-apps", source / "Applications")
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
+    conn = sqlite3.connect(job_dir / "manifest.sqlite")
+    try:
+        conn.execute("update files set source_path = ?", (str(outside_app),))
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = run_cli("copy", "--job-dir", str(job_dir), "--phase", "applications", "--timeout", "2")
+    row = file_rows(job_dir)["Volume Applications/Legacy.app/Contents/Info.plist"]
+
+    assert "failed=1" in result.stdout
+    assert row["status"] == "failed"
+    assert "outside allowed application roots" in row["error"]
+
+
+def test_manifest_migration_adds_source_path_for_application_rows(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    source.mkdir()
+    job_dir = tmp_path / "job"
+    job_dir.mkdir()
+    conn = sqlite3.connect(job_dir / "manifest.sqlite")
+    try:
+        conn.executescript(
+            """
+            create table config (
+                key text primary key,
+                value text not null
+            );
+            create table files (
+                id integer primary key,
+                relative_path text not null unique,
+                size integer not null,
+                mtime_ns integer not null,
+                mode integer not null,
+                kind text not null,
+                phase text not null,
+                status text not null default 'pending',
+                attempts integer not null default 0,
+                error text,
+                warning text,
+                copied_bytes integer not null default 0,
+                scanned_at text not null,
+                started_at text,
+                finished_at text,
+                updated_at text not null
+            );
+            """
+        )
+        conn.executemany(
+            "insert into config(key, value) values(?, ?)",
+            {
+                "source": str(source.resolve()),
+                "dest": str((tmp_path / "dest").resolve(strict=False)),
+                "profile": "customer-home",
+            }.items(),
+        )
+        conn.execute(
+            """
+            insert into files(
+                relative_path, size, mtime_ns, mode, kind, phase, status,
+                warning, copied_bytes, scanned_at, updated_at
+            )
+            values('Volume Applications/Legacy.app/Contents/Info.plist', 0, 0, 33188,
+                   'file', 'applications', 'pending', null, 0, '2026-01-01T00:00:00+00:00',
+                   '2026-01-01T00:00:00+00:00')
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    run_cli("status", "--job-dir", str(job_dir))
+
+    conn = sqlite3.connect(job_dir / "manifest.sqlite")
+    try:
+        columns = {row[1] for row in conn.execute("pragma table_info(files)")}
+    finally:
+        conn.close()
+    assert "source_path" in columns
+
+
 def test_copy_copies_files_preserves_content_and_updates_status(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     write_file(source / "Desktop" / "invoice.txt", b"desktop")

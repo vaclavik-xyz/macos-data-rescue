@@ -15,6 +15,7 @@ PHASES = (
     "visible-home",
     "hidden-home",
     "app-data",
+    "applications",
     "full-home",
     "important",
     "photos",

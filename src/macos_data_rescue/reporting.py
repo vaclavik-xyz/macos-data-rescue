@@ -118,7 +118,7 @@ def normalized_summary(job_dir: Path) -> dict[str, dict[str, int]]:
 
 
 def row_to_dict(row) -> dict[str, object]:
-    return {
+    item = {
         "relative_path": row["relative_path"],
         "size": row["size"],
         "mtime_ns": row["mtime_ns"],
@@ -130,3 +130,6 @@ def row_to_dict(row) -> dict[str, object]:
         "warning": row["warning"],
         "copied_bytes": row["copied_bytes"],
     }
+    if "source_path" in row.keys() and row["source_path"]:
+        item["source_path"] = row["source_path"]
+    return item

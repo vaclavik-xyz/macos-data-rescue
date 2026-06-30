@@ -29,6 +29,7 @@ class ScannedFile:
     mode: int
     kind: str
     phase: str
+    source_path: str | None = None
     warning: str | None = None
 
 
@@ -71,6 +72,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
         create table if not exists files (
             id integer primary key,
             relative_path text not null unique,
+            source_path text,
             size integer not null,
             mtime_ns integer not null,
             mode integer not null,
@@ -91,6 +93,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
         create index if not exists idx_files_status on files(status);
         """
     )
+    ensure_column(conn, "files", "source_path", "text")
     ensure_column(conn, "files", "warning", "text")
 
 
@@ -192,12 +195,13 @@ def upsert_scanned_files(job_dir: Path, files: Iterable[ScannedFile]) -> int:
             conn.execute(
                 """
                 insert into files(
-                    relative_path, size, mtime_ns, mode, kind, phase, status,
+                    relative_path, source_path, size, mtime_ns, mode, kind, phase, status,
                     attempts, error, warning, copied_bytes, scanned_at,
                     started_at, finished_at, updated_at
                 )
-                values(?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+                values(?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(relative_path) do update set
+                    source_path = excluded.source_path,
                     size = excluded.size,
                     mtime_ns = excluded.mtime_ns,
                     mode = excluded.mode,
@@ -214,6 +218,7 @@ def upsert_scanned_files(job_dir: Path, files: Iterable[ScannedFile]) -> int:
                 """,
                 (
                     item.relative_path,
+                    item.source_path,
                     item.size,
                     item.mtime_ns,
                     item.mode,

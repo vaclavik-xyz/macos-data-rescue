@@ -77,11 +77,23 @@ def process_row(
     timeout: float,
     summary: CopySummary,
 ) -> None:
-    source = source_root / row["relative_path"]
-    dest = dest_root / row["relative_path"]
     scan_warning = without_copy_xattr_warnings(row["warning"])
     summary.processed += 1
     mark_copying(job_dir, row["id"])
+    try:
+        source = resolve_row_source(source_root, row)
+    except ValueError as exc:
+        mark_result(
+            job_dir,
+            row["id"],
+            "failed",
+            error=f"ValueError: {exc}",
+            warning=scan_warning,
+        )
+        summary.failed += 1
+        return
+
+    dest = dest_root / row["relative_path"]
     if row["kind"] == "symlink":
         mark_result(
             job_dir,
@@ -119,6 +131,59 @@ def process_row(
             warning=scan_warning,
         )
         summary.failed += 1
+
+
+def resolve_row_source(source_root: Path, row: Any) -> Path:
+    source_path = row["source_path"] if "source_path" in row.keys() else None
+    if not source_path:
+        return source_root / row["relative_path"]
+    if row["phase"] != "applications":
+        raise ValueError("manifest source_path is only allowed for applications phase")
+
+    source = Path(source_path)
+    candidate = containment_path(source, row["kind"])
+    roots = application_source_roots_for_home(source_root)
+    if not any(is_same_or_inside(candidate, root) for root in roots):
+        raise ValueError(f"manifest source_path outside allowed application roots: {source_path}")
+    return source
+
+
+def containment_path(path: Path, kind: object) -> Path:
+    if kind == "symlink":
+        return path.parent.resolve(strict=False) / path.name
+    return path.resolve(strict=False)
+
+
+def application_source_roots_for_home(source_root: Path) -> tuple[Path, ...]:
+    roots: list[Path] = []
+    volume_applications = volume_root_for_home(source_root) / "Applications"
+    user_applications = source_root / "Applications"
+    for root in (volume_applications, user_applications):
+        if is_real_directory(root):
+            roots.append(root.resolve(strict=False))
+    return tuple(roots)
+
+
+def volume_root_for_home(source: Path) -> Path:
+    parts = source.parts
+    users_indexes = [index for index, part in enumerate(parts) if part == "Users"]
+    if users_indexes:
+        users_index = users_indexes[-1]
+        if users_index > 0 and users_index + 1 < len(parts):
+            return Path(*parts[:users_index])
+    return source.parent
+
+
+def is_real_directory(path: Path) -> bool:
+    try:
+        info = path.stat(follow_symlinks=False)
+    except OSError:
+        return False
+    return stat.S_ISDIR(info.st_mode)
+
+
+def is_same_or_inside(candidate: Path, parent: Path) -> bool:
+    return candidate == parent or parent in candidate.parents
 
 
 def destination_matches(dest: Path, row: Any) -> bool:
