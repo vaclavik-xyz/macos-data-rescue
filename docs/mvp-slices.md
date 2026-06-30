@@ -8,13 +8,14 @@ This document tracks the MVP that was implemented and the next hardening slices.
 - `scan`: walk the mounted source home and classify files into phases.
 - `copy` / `resume`: copy one file at a time through a child process with per-file timeout.
 - Atomic destination writes through unique temp files in the destination directory.
+- Post-copy byte-count verification prevents files from being marked `copied` when the worker reads fewer bytes than the manifest expected.
 - Stale internal temp cleanup before `copy` / `resume`, without touching source data or manifest-tracked hidden files.
 - Symlink safety: symlinks are recorded and marked `skipped`, never followed.
 - Resume semantics for failed/timed-out/copying rows and copied rows whose destination disappeared.
 - `--limit` counts files that actually need work, not already-matching copied rows.
 - `status` and `report --format markdown|json`.
-- Regression test suite covering scan/excludes, copy, resume, timeout/failure continuation, symlink safety, temp cleanup/collision, streamed manifest selection, source write guards, safe metadata copy, exit codes, and limit starvation.
-- Reports include general warnings plus per-file suspected iCloud dataless placeholder markers in Markdown and JSON.
+- Regression test suite covering scan/excludes, copy completeness, resume, timeout/failure continuation, symlink safety, temp cleanup/collision, streamed manifest selection, source write guards, safe metadata copy, exit codes, and limit starvation.
+- Reports include general warnings plus per-file suspected iCloud dataless placeholder markers in Markdown and JSON, including macOS `SF_DATALESS` flag detection.
 
 ## Verification gates
 

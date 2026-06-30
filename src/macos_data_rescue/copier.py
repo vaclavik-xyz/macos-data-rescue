@@ -86,7 +86,7 @@ def process_row(
         summary.skipped += 1
         return
 
-    result = copy_one_with_timeout(source, dest, timeout)
+    result = copy_one_with_timeout(source, dest, timeout, expected_size=int(row["size"]))
     status = str(result["status"])
     if status == "copied":
         copied_bytes = int(result.get("copied_bytes", 0))
@@ -96,7 +96,8 @@ def process_row(
         mark_result(job_dir, row["id"], "timed_out", error=str(result["error"]))
         summary.timed_out += 1
     else:
-        mark_result(job_dir, row["id"], "failed", error=str(result["error"]))
+        copied_bytes = int(result.get("copied_bytes", 0))
+        mark_result(job_dir, row["id"], "failed", error=str(result["error"]), copied_bytes=copied_bytes)
         summary.failed += 1
 
 
@@ -108,14 +109,14 @@ def destination_matches(dest: Path, row: Any) -> bool:
     return info.st_size == row["size"] and info.st_mtime_ns == row["mtime_ns"]
 
 
-def copy_one_with_timeout(source: Path, dest: Path, timeout: float) -> dict[str, object]:
+def copy_one_with_timeout(source: Path, dest: Path, timeout: float, *, expected_size: int) -> dict[str, object]:
     ctx = multiprocessing.get_context("spawn")
     result_queue = ctx.Queue(maxsize=1)
     dest.parent.mkdir(parents=True, exist_ok=True)
     temp = make_temp_path(dest)
     process = ctx.Process(
         target=_copy_file_child,
-        args=(str(source), str(dest), str(temp), result_queue),
+        args=(str(source), str(dest), str(temp), expected_size, result_queue),
     )
     process.start()
     process.join(timeout)
@@ -142,6 +143,7 @@ def _copy_file_child(
     source_text: str,
     dest_text: str,
     temp_text: str,
+    expected_size: int,
     result_queue: multiprocessing.Queue,
 ) -> None:
     source = Path(source_text)
@@ -158,6 +160,16 @@ def _copy_file_child(
                 copied_bytes += len(chunk)
             dst.flush()
             os.fsync(dst.fileno())
+        if copied_bytes != expected_size:
+            cleanup_path(temp)
+            result_queue.put(
+                {
+                    "status": "failed",
+                    "error": f"incomplete copy: expected {expected_size} bytes, copied {copied_bytes} bytes",
+                    "copied_bytes": copied_bytes,
+                }
+            )
+            return
         copy_basic_metadata(source, temp)
         copy_xattrs(source, temp)
         os.replace(temp, dest)

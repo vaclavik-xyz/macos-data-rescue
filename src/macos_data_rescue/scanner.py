@@ -29,6 +29,7 @@ ICLOUD_PATH_MARKERS = (
 )
 ICLOUD_XATTR_MARKERS = ("icloud", "ubiquity", "clouddocs", "fileprovider", "dataless")
 ICLOUD_TINY_FILE_BYTES = 4096
+SF_DATALESS = getattr(stat, "SF_DATALESS", 0x40000000)
 ICLOUD_PLACEHOLDER_WARNING = (
     "suspected iCloud dataless placeholder: data may not have been physically "
     "present on disk"
@@ -131,6 +132,8 @@ def suspected_icloud_placeholder(
 ) -> bool:
     if not stat.S_ISREG(info.st_mode):
         return False
+    if has_sf_dataless_flag(info):
+        return True
     xattr_names = list_xattr_names(path)
     if any(has_icloud_marker(name) for name in xattr_names):
         return True
@@ -143,6 +146,10 @@ def suspected_icloud_placeholder(
 def has_icloud_marker(value: str) -> bool:
     lowered = value.lower()
     return any(marker.lower() in lowered for marker in ICLOUD_PATH_MARKERS + ICLOUD_XATTR_MARKERS)
+
+
+def has_sf_dataless_flag(info: os.stat_result) -> bool:
+    return bool(getattr(info, "st_flags", 0) & SF_DATALESS)
 
 
 def list_xattr_names(path: Path) -> tuple[str, ...]:

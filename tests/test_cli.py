@@ -224,6 +224,32 @@ def test_copy_copies_files_preserves_content_and_updates_status(tmp_path: Path) 
     assert rows["Pictures/photo.jpg"]["status"] == "pending"
 
 
+def test_copy_fails_when_worker_reads_less_than_manifest_size(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    target = source / "Desktop" / "shrinking.txt"
+    write_file(target, b"abcdef")
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+    target.write_bytes(b"abc")
+
+    result = run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+    payload = json.loads(run_cli("report", "--job-dir", str(job_dir), "--format", "json").stdout)
+    markdown = run_cli("report", "--job-dir", str(job_dir), "--format", "markdown").stdout
+
+    row = file_rows(job_dir)["Desktop/shrinking.txt"]
+    assert result.returncode == 0
+    assert "copied=0" in result.stdout
+    assert "failed=1" in result.stdout
+    assert row["status"] == "failed"
+    assert row["copied_bytes"] == 3
+    assert "expected 6 bytes, copied 3 bytes" in row["error"]
+    assert not (dest_dir / "Desktop" / "shrinking.txt").exists()
+    [file_payload] = payload["files"]
+    assert file_payload["size"] == 6
+    assert file_payload["copied_bytes"] == 3
+    assert file_payload["status"] == "failed"
+    assert "copied 3/6 bytes" in markdown
+
+
 def test_copy_does_not_make_destination_immutable_before_publish(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     immutable = source / "Desktop" / "locked.txt"
@@ -490,6 +516,19 @@ def test_symlink_warning_detection_does_not_read_target_xattrs(tmp_path: Path, m
     monkeypatch.setattr(scanner, "list_xattr_names", fail_if_called)
 
     assert scanner.warning_for(link, ("Desktop", "iCloud-link"), link.stat(follow_symlinks=False)) is None
+
+
+def test_sf_dataless_flag_marks_suspected_icloud_placeholder_without_path_marker(tmp_path: Path) -> None:
+    from macos_data_rescue import scanner
+
+    class FakeStat:
+        st_mode = stat.S_IFREG | 0o644
+        st_size = 1024 * 1024
+        st_flags = scanner.SF_DATALESS
+
+    warning = scanner.warning_for(tmp_path / "Desktop" / "contract.pages", ("Desktop", "contract.pages"), FakeStat())
+
+    assert warning == scanner.ICLOUD_PLACEHOLDER_WARNING
 
 
 def test_scan_migrates_existing_manifest_for_file_warnings(tmp_path: Path) -> None:

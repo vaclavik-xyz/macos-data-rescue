@@ -90,9 +90,14 @@ def markdown_report(job_dir: Path) -> str:
         lines.append("No files scanned.")
     for item in files:
         error = f" - {item['error']}" if item["error"] else ""
+        copied = (
+            f" - copied {item['copied_bytes']}/{item['size']} bytes"
+            if 0 < item["copied_bytes"] != item["size"]
+            else ""
+        )
         warning = f" - WARNING: {item['warning']}" if item["warning"] else ""
         lines.append(
-            f"- `{item['relative_path']}` - {item['status']} - {item['size']} bytes{error}{warning}"
+            f"- `{item['relative_path']}` - {item['status']} - {item['size']} bytes{copied}{error}{warning}"
         )
     return "\n".join(lines) + "\n"
 
