@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .manifest import load_config, mark_copying, mark_result, selected_files
+from .manifest import iter_selected_files, load_config, mark_copying, mark_result
 
 
 CHUNK_SIZE = 1024 * 1024
@@ -34,7 +34,7 @@ def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = N
     config = load_config(job_dir)
     summary = CopySummary()
     attempted = 0
-    for row in selected_files(job_dir, phase, None):
+    for row in iter_selected_files(job_dir, phase):
         source = config.source / row["relative_path"]
         dest = config.dest / row["relative_path"]
         if row["status"] == "copied" and destination_matches(dest, row):

@@ -180,6 +180,21 @@ def test_resume_limit_counts_files_that_need_work_not_skipped_matches(tmp_path: 
     assert rows["Desktop/c.txt"]["status"] == "pending"
 
 
+def test_manifest_selected_files_are_streamed(tmp_path: Path) -> None:
+    from macos_data_rescue.manifest import iter_selected_files
+
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "a.txt", b"a")
+    write_file(source / "Desktop" / "b.txt", b"b")
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+
+    rows = iter_selected_files(job_dir, "important")
+
+    assert not isinstance(rows, list)
+    iterator = iter(rows)
+    assert next(iterator)["relative_path"] == "Desktop/a.txt"
+
+
 def test_report_outputs_markdown_and_json_summary(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     write_file(source / "Desktop" / "invoice.txt", b"desktop")

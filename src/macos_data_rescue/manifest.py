@@ -44,6 +44,7 @@ def connect(job_dir: Path) -> sqlite3.Connection:
         raise RescueError(f"manifest not found: {db_path}")
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 5000")
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
@@ -87,6 +88,8 @@ def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobC
     db_path = manifest_path(job_dir)
     conn = sqlite3.connect(db_path)
     try:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
         create_schema(conn)
         now = utc_now()
         values = {
@@ -208,6 +211,18 @@ def upsert_scanned_files(job_dir: Path, files: Iterable[ScannedFile]) -> int:
 
 
 def selected_files(job_dir: Path, phase: str, limit: int | None = None) -> list[sqlite3.Row]:
+    rows = iter_selected_files(job_dir, phase)
+    if limit is None:
+        return list(rows)
+    selected = []
+    for row in rows:
+        selected.append(row)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def iter_selected_files(job_dir: Path, phase: str):
     conn = connect(job_dir)
     try:
         params: list[object] = []
@@ -215,11 +230,16 @@ def selected_files(job_dir: Path, phase: str, limit: int | None = None) -> list[
         if phase != "all":
             where = "where phase = ?"
             params.append(phase)
-        sql = f"select * from files {where} order by relative_path"
-        if limit is not None:
-            sql += " limit ?"
-            params.append(limit)
-        return conn.execute(sql, params).fetchall()
+        sql = f"""
+            select *
+            from files
+            {where}
+            order by
+                case when status in ('copied', 'skipped') then 1 else 0 end,
+                relative_path
+        """
+        for row in conn.execute(sql, params):
+            yield row
     finally:
         conn.close()
 
