@@ -1405,12 +1405,15 @@ def test_customer_report_marks_pending_and_copying_as_unresolved(tmp_path: Path)
         conn.close()
 
     run_cli("customer-report", "--job-dir", str(job_dir), "--format", "markdown")
+    run_cli("customer-report", "--job-dir", str(job_dir), "--format", "pdf")
 
     report_text = (tmp_path / "recovery-report.md").read_text()
+    pdf_bytes = (tmp_path / "recovery-report.pdf").read_bytes()
     assert "completed with unresolved files" in report_text
     assert "| Copying files | 1 |" in report_text
     assert "| Pending files | 0 |" in report_text
     assert "not fully copied yet" in report_text
+    assert b"Copying files" in pdf_bytes
 
 
 def test_customer_report_preserves_existing_file_when_atomic_replace_fails(tmp_path: Path, monkeypatch) -> None:
@@ -1465,6 +1468,62 @@ def test_customer_pdf_report_escapes_unsupported_unicode_without_corrupting_mark
     assert pdf_bytes.startswith(b"%PDF-")
     assert b"zdroj-\\\\u010d" in pdf_bytes
     assert "zdroj-č" in (tmp_path / "recovery-report.md").read_text()
+
+
+def test_customer_report_pdf_has_layout_and_recovered_data_breakdown(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    write_file(source / "Projects" / "site" / "index.html", b"custom")
+    write_file(source / "Library" / "Mail" / "V10" / "message.emlx", b"mail")
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+    run_cli("copy", "--job-dir", str(job_dir), "--timeout", "2")
+
+    run_cli("customer-report", "--job-dir", str(job_dir), "--format", "markdown")
+    run_cli("customer-report", "--job-dir", str(job_dir), "--format", "pdf")
+
+    markdown = (tmp_path / "recovery-report.md").read_text()
+    pdf_bytes = (tmp_path / "recovery-report.pdf").read_bytes()
+    assert "## Recovered Data Breakdown" in markdown
+    assert "| Desktop | 1 |" in markdown
+    assert "| Projects | 1 |" in markdown
+    assert "| Library | 1 |" in markdown
+    assert "## Library Data Recovered" in markdown
+    assert "| Mail | 1 |" in markdown
+    assert b"Recovered Data Breakdown" in pdf_bytes
+    assert b"Desktop" in pdf_bytes
+    assert b"Projects" in pdf_bytes
+    assert b"Library Data Recovered" in pdf_bytes
+    assert b"/F2" in pdf_bytes
+    assert b" re f" in pdf_bytes
+    assert b"1 1 1 rg 0 0 595 842 re f" in pdf_bytes
+
+
+def test_customer_report_escapes_breakdown_markdown_table_cells(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Customer|Project" / "invoice.txt", b"invoice")
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+    run_cli("copy", "--job-dir", str(job_dir), "--timeout", "2")
+
+    run_cli("customer-report", "--job-dir", str(job_dir), "--format", "markdown")
+
+    markdown = (tmp_path / "recovery-report.md").read_text()
+    assert "| Customer\\|Project | 1 |" in markdown
+    assert "| Customer|Project | 1 |" not in markdown
+
+
+def test_customer_pdf_breakdown_includes_more_than_twelve_rows(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    for index in range(14):
+        write_file(source / f"Folder{index:02d}" / "file.txt", b"x")
+        write_file(source / "Library" / f"Area{index:02d}" / "file.txt", b"x")
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+    run_cli("copy", "--job-dir", str(job_dir), "--timeout", "2")
+
+    run_cli("customer-report", "--job-dir", str(job_dir), "--format", "pdf")
+
+    pdf_bytes = (tmp_path / "recovery-report.pdf").read_bytes()
+    assert b"Folder13" in pdf_bytes
+    assert b"Area13" in pdf_bytes
 
 
 def test_rescue_error_returns_one_but_argparse_usage_returns_two(tmp_path: Path) -> None:

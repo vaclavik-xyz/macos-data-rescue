@@ -72,7 +72,7 @@ def write_customer_report(job_dir: Path, report_format: str, output_path: Path |
     if report_format == "markdown":
         atomic_write_bytes(output_path, markdown.encode())
     elif report_format == "pdf":
-        atomic_write_bytes(output_path, simple_pdf_bytes(customer_text_lines(markdown)))
+        atomic_write_bytes(output_path, customer_pdf_bytes(job_dir))
     else:
         raise RescueError(f"unsupported customer report format: {report_format}")
     return output_path
@@ -141,6 +141,9 @@ def customer_markdown_report(job_dir: Path) -> str:
     config = load_config(job_dir)
     migrate_manifest(job_dir)
     summary = normalized_summary(job_dir)
+    rows = all_files(job_dir)
+    breakdown = recovered_top_level_breakdown(rows)
+    library_breakdown = recovered_library_breakdown(rows)
     copied_bytes = summary["copied"]["bytes"]
     failed = summary["failed"]["count"]
     timed_out = summary["timed_out"]["count"]
@@ -188,6 +191,36 @@ def customer_markdown_report(job_dir: Path) -> str:
             "",
             f"`{config.dest}`",
             "",
+            "## Recovered Data Breakdown",
+            "",
+        ]
+    )
+    if breakdown:
+        lines.extend(
+            [
+                "| Folder | Files | Size |",
+                "| --- | ---: | ---: |",
+            ]
+        )
+        for label, count, size in breakdown:
+            lines.append(f"| {markdown_table_cell(label)} | {count} | {format_gib(size)} |")
+    else:
+        lines.append("No copied file content is recorded in the manifest yet.")
+    if library_breakdown:
+        lines.extend(
+            [
+                "",
+                "## Library Data Recovered",
+                "",
+                "| Library area | Files | Size |",
+                "| --- | ---: | ---: |",
+            ]
+        )
+        for label, count, size in library_breakdown:
+            lines.append(f"| {markdown_table_cell(label)} | {count} | {format_gib(size)} |")
+    lines.extend(
+        [
+            "",
             "## Items Not Copied",
             "",
         ]
@@ -234,6 +267,383 @@ def customer_markdown_report(job_dir: Path) -> str:
         ]
     )
     return "\n".join(lines) + "\n"
+
+
+def customer_pdf_bytes(job_dir: Path) -> bytes:
+    config = load_config(job_dir)
+    migrate_manifest(job_dir)
+    summary = normalized_summary(job_dir)
+    rows = all_files(job_dir)
+    failed = summary["failed"]["count"]
+    timed_out = summary["timed_out"]["count"]
+    pending = summary["pending"]["count"]
+    copying = summary["copying"]["count"]
+    unresolved = failed + timed_out + pending + copying
+    canvas = PdfCanvas()
+    canvas.header("Data Recovery Report", "Customer handoff summary")
+    canvas.status_card(
+        "Recovery complete" if not unresolved else "Recovery has unresolved files",
+        (
+            "No failed, timed-out, pending, or interrupted files are recorded."
+            if not unresolved
+            else "Some files need technician review. See the detailed report for exact paths."
+        ),
+        ok=not unresolved,
+    )
+    canvas.metric_cards(
+        (
+            ("Copied files", str(summary["copied"]["count"])),
+            ("Copied data", format_gib(summary["copied"]["bytes"])),
+            ("Unresolved", str(unresolved)),
+        )
+    )
+    canvas.section("Recovery locations")
+    canvas.key_value("Source", str(config.source))
+    canvas.key_value("Recovered data", str(config.dest))
+    canvas.spacer(8)
+    canvas.section("Result summary")
+    canvas.table(
+        ("Result", "Count"),
+        (
+            ("Copied files", str(summary["copied"]["count"])),
+            ("Copying files", str(copying)),
+            ("Failed files", str(failed)),
+            ("Timed-out files", str(timed_out)),
+            ("Pending files", str(pending)),
+            ("Skipped entries", str(summary["skipped"]["count"])),
+        ),
+        (330, 120),
+    )
+    canvas.section("Recovered Data Breakdown")
+    breakdown_rows = tuple(
+        (label, str(count), format_gib(size)) for label, count, size in recovered_top_level_breakdown(rows)
+    )
+    if breakdown_rows:
+        canvas.table(("Folder", "Files", "Size"), breakdown_rows, (240, 80, 130))
+    else:
+        canvas.paragraph("No copied file content is recorded in the manifest yet.")
+    library_rows = tuple(
+        (label, str(count), format_gib(size)) for label, count, size in recovered_library_breakdown(rows)
+    )
+    if library_rows:
+        canvas.section("Library Data Recovered")
+        canvas.table(("Library area", "Files", "Size"), library_rows, (240, 80, 130))
+    canvas.section("Important notes")
+    canvas.bullet(
+        "Copied means file content was copied and the copied byte count matched the expected source size."
+    )
+    canvas.bullet(
+        "macOS extended attributes and resource forks are preserved best-effort; quarantine and MAC labels are skipped."
+    )
+    canvas.bullet(
+        "iCloud dataless placeholders may not have had physical data on disk and can require export from a signed-in Mac or iCloud."
+    )
+    canvas.bullet("This is a practical file-level recovery copy, not a forensic disk image.")
+    canvas.footer()
+    return canvas.render()
+
+
+def recovered_top_level_breakdown(rows) -> list[tuple[str, int, int]]:
+    return aggregate_copied_rows(rows, top_level_label)
+
+
+def recovered_library_breakdown(rows) -> list[tuple[str, int, int]]:
+    return aggregate_copied_rows(rows, library_area_label)
+
+
+def aggregate_copied_rows(rows, label_for) -> list[tuple[str, int, int]]:
+    totals: dict[str, list[int]] = {}
+    for row in rows:
+        if row["status"] != "copied":
+            continue
+        label = label_for(str(row["relative_path"]))
+        if label is None:
+            continue
+        item = totals.setdefault(label, [0, 0])
+        item[0] += 1
+        item[1] += copied_row_size(row)
+    return sorted(
+        ((label, count, size) for label, (count, size) in totals.items()),
+        key=lambda item: (-item[2], item[0].lower()),
+    )
+
+
+def top_level_label(relative_path: str) -> str | None:
+    parts = tuple(part for part in relative_path.split("/") if part)
+    return parts[0] if parts else None
+
+
+def library_area_label(relative_path: str) -> str | None:
+    parts = tuple(part for part in relative_path.split("/") if part)
+    if not parts or parts[0] != "Library":
+        return None
+    if len(parts) == 1:
+        return "Library root"
+    return parts[1]
+
+
+def copied_row_size(row) -> int:
+    copied_bytes = int(row["copied_bytes"])
+    if copied_bytes > 0:
+        return copied_bytes
+    return int(row["size"])
+
+
+def markdown_table_cell(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("|", "\\|")
+
+
+class PdfCanvas:
+    page_width = 595
+    page_height = 842
+    margin = 42
+    bottom = 58
+    body_width = page_width - margin * 2
+
+    def __init__(self) -> None:
+        self.pages: list[list[str]] = [[]]
+        self.y = 742
+
+    @property
+    def commands(self) -> list[str]:
+        return self.pages[-1]
+
+    def header(self, title: str, subtitle: str) -> None:
+        self.rect(0, 766, self.page_width, 76, (0.12, 0.25, 0.38))
+        self.text(self.margin, 812, title, "F2", 24, (1, 1, 1))
+        self.text(self.margin, 792, subtitle, "F1", 11, (0.86, 0.92, 0.96))
+        self.y = 734
+
+    def status_card(self, title: str, body: str, *, ok: bool) -> None:
+        self.ensure(70)
+        color = (0.88, 0.96, 0.91) if ok else (1.0, 0.94, 0.82)
+        accent = (0.12, 0.48, 0.28) if ok else (0.72, 0.38, 0.04)
+        top = self.y
+        self.rect(self.margin, top - 58, self.body_width, 58, color)
+        self.rect(self.margin, top - 58, 6, 58, accent)
+        self.text(self.margin + 18, top - 22, title, "F2", 14, (0.08, 0.12, 0.18))
+        self.wrapped_text(self.margin + 18, top - 41, body, 10, self.body_width - 32)
+        self.y = top - 76
+
+    def metric_cards(self, metrics: tuple[tuple[str, str], ...]) -> None:
+        self.ensure(86)
+        gap = 10
+        width = (self.body_width - gap * (len(metrics) - 1)) / len(metrics)
+        top = self.y
+        for index, (label, value) in enumerate(metrics):
+            x = self.margin + index * (width + gap)
+            self.rect(x, top - 62, width, 62, (0.95, 0.97, 0.99))
+            self.text(x + 12, top - 20, label.upper(), "F1", 8, (0.37, 0.45, 0.53))
+            self.text(x + 12, top - 44, value, "F2", 17, (0.08, 0.12, 0.18))
+        self.y = top - 82
+
+    def section(self, title: str) -> None:
+        self.ensure(34)
+        self.text(self.margin, self.y, title, "F2", 14, (0.12, 0.25, 0.38))
+        self.line(self.margin, self.y - 7, self.margin + self.body_width, self.y - 7, (0.78, 0.84, 0.90))
+        self.y -= 25
+
+    def key_value(self, label: str, value: str) -> None:
+        self.ensure(34)
+        self.text(self.margin, self.y, label, "F2", 9, (0.27, 0.34, 0.42))
+        consumed = self.wrapped_text(self.margin + 95, self.y, value, 9, self.body_width - 95)
+        self.y -= max(18, consumed)
+
+    def table(
+        self,
+        headers: tuple[str, ...],
+        rows: tuple[tuple[str, ...], ...],
+        widths: tuple[int, ...],
+    ) -> None:
+        row_height = 20
+        remaining = list(rows)
+        while remaining:
+            self.ensure(row_height * 2 + 12)
+            available = self.y - self.bottom - row_height - 18
+            chunk_size = max(1, int(available // row_height))
+            chunk = tuple(remaining[:chunk_size])
+            remaining = remaining[chunk_size:]
+            self.table_chunk(headers, chunk, widths, row_height)
+            if remaining:
+                self.pages.append([])
+                self.y = 792
+
+    def table_chunk(
+        self,
+        headers: tuple[str, ...],
+        rows: tuple[tuple[str, ...], ...],
+        widths: tuple[int, ...],
+        row_height: int,
+    ) -> None:
+        x = self.margin
+        top = self.y
+        total_width = sum(widths)
+        self.rect(x, top - row_height, total_width, row_height, (0.12, 0.25, 0.38))
+        self.table_row(headers, widths, top - 14, "F2", 9, (1, 1, 1))
+        for index, row in enumerate(rows):
+            row_top = top - row_height * (index + 1)
+            fill = (0.98, 0.99, 1.0) if index % 2 == 0 else (1, 1, 1)
+            self.rect(x, row_top - row_height, total_width, row_height, fill)
+            self.table_row(row, widths, row_top - 14, "F1", 9, (0.08, 0.12, 0.18))
+        self.y = top - row_height * (len(rows) + 1) - 18
+
+    def table_row(
+        self,
+        values: tuple[str, ...],
+        widths: tuple[int, ...],
+        y: float,
+        font: str,
+        size: int,
+        color: tuple[float, float, float],
+    ) -> None:
+        x = self.margin + 8
+        for value, width in zip(values, widths):
+            self.text(x, y, fit_text(value, width, size), font, size, color)
+            x += width
+
+    def paragraph(self, text: str) -> None:
+        consumed = self.wrapped_text(self.margin, self.y, text, 10, self.body_width)
+        self.y -= consumed + 6
+
+    def bullet(self, text: str) -> None:
+        self.ensure(24)
+        self.text(self.margin, self.y, "*", "F2", 10, (0.12, 0.25, 0.38))
+        consumed = self.wrapped_text(self.margin + 16, self.y, text, 10, self.body_width - 16)
+        self.y -= consumed + 5
+
+    def spacer(self, height: int) -> None:
+        self.y -= height
+
+    def wrapped_text(self, x: float, y: float, text: str, size: int, width: float) -> int:
+        lines = wrap_pdf_lines([text], max_chars_for_width(width, size))
+        leading = size + 3
+        for index, line in enumerate(lines):
+            self.text(x, y - index * leading, line, "F1", size, (0.12, 0.16, 0.22))
+        return max(leading, len(lines) * leading)
+
+    def ensure(self, height: float) -> None:
+        if self.y - height >= self.bottom:
+            return
+        self.pages.append([])
+        self.y = 792
+
+    def footer(self) -> None:
+        for index, commands in enumerate(self.pages, start=1):
+            commands.append(pdf_text_command(self.margin, 28, f"Page {index}", "F1", 8, (0.45, 0.52, 0.60)))
+
+    def rect(self, x: float, y: float, width: float, height: float, color: tuple[float, float, float]) -> None:
+        self.commands.append(f"{pdf_rgb(color)} rg {pdf_num(x)} {pdf_num(y)} {pdf_num(width)} {pdf_num(height)} re f")
+
+    def line(
+        self,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        color: tuple[float, float, float],
+    ) -> None:
+        self.commands.append(
+            f"{pdf_rgb(color)} RG 0.8 w {pdf_num(x1)} {pdf_num(y1)} m {pdf_num(x2)} {pdf_num(y2)} l S"
+        )
+
+    def text(
+        self,
+        x: float,
+        y: float,
+        text: str,
+        font: str,
+        size: int,
+        color: tuple[float, float, float],
+    ) -> None:
+        self.commands.append(pdf_text_command(x, y, text, font, size, color))
+
+    def render(self) -> bytes:
+        page_background = "1 1 1 rg 0 0 595 842 re f"
+        streams = [
+            "\n".join((page_background, *commands)).encode("latin-1")
+            for commands in self.pages
+        ]
+        return pdf_document_bytes(streams)
+
+
+def pdf_text_command(
+    x: float,
+    y: float,
+    text: str,
+    font: str,
+    size: int,
+    color: tuple[float, float, float],
+) -> str:
+    return (
+        "BT "
+        f"{pdf_rgb(color)} rg "
+        f"/{font} {size} Tf "
+        f"{pdf_num(x)} {pdf_num(y)} Td "
+        f"({pdf_escape(text)}) Tj "
+        "ET"
+    )
+
+
+def pdf_document_bytes(streams: list[bytes]) -> bytes:
+    objects: list[bytes] = []
+    objects.append(b"<< /Type /Catalog /Pages 2 0 R >>")
+    page_object_ids = [5 + index * 2 for index in range(len(streams))]
+    kids = b" ".join(f"{object_id} 0 R".encode("ascii") for object_id in page_object_ids)
+    objects.append(f"<< /Type /Pages /Kids [{kids.decode('ascii')}] /Count {len(streams)} >>".encode("ascii"))
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>")
+
+    for index, stream in enumerate(streams):
+        page_id = page_object_ids[index]
+        content_id = page_id + 1
+        objects.append(
+            (
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PdfCanvas.page_width} {PdfCanvas.page_height}] "
+                f"/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {content_id} 0 R >>"
+            ).encode("ascii")
+        )
+        objects.append(b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream")
+
+    pdf = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for object_id, obj in enumerate(objects, start=1):
+        offsets.append(len(pdf))
+        pdf.extend(f"{object_id} 0 obj\n".encode("ascii"))
+        pdf.extend(obj)
+        pdf.extend(b"\nendobj\n")
+    xref_offset = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    pdf.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    pdf.extend(
+        (
+            f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref_offset}\n%%EOF\n"
+        ).encode("ascii")
+    )
+    return bytes(pdf)
+
+
+def fit_text(text: str, width: int, size: int) -> str:
+    max_chars = max_chars_for_width(width - 14, size)
+    if len(text) <= max_chars:
+        return text
+    if max_chars <= 3:
+        return text[:max_chars]
+    return text[: max_chars - 3].rstrip() + "..."
+
+
+def max_chars_for_width(width: float, size: int) -> int:
+    return max(8, int(width / (size * 0.52)))
+
+
+def pdf_rgb(color: tuple[float, float, float]) -> str:
+    return " ".join(pdf_num(component) for component in color)
+
+
+def pdf_num(value: float) -> str:
+    return f"{value:.3f}".rstrip("0").rstrip(".")
 
 
 def customer_text_lines(markdown: str) -> list[str]:

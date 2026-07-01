@@ -144,7 +144,7 @@ uv run macos-data-rescue report --job-dir "$JOB" --format markdown > "$JOB/repor
 uv run macos-data-rescue report --job-dir "$JOB" --format json > "$JOB/report.json"
 ```
 
-`customer-report` writes `recovery-report.pdf` or `recovery-report.md` into the visible recovery root next to `user-data/` by default. Keep the full Markdown/JSON reports under `JOB` for technician review.
+`customer-report` writes `recovery-report.pdf` or `recovery-report.md` into the visible recovery root next to `user-data/` by default. The customer PDF includes the outcome summary, top-level recovered folder breakdown, and Library-area breakdown when applicable. Keep the full Markdown/JSON reports under `JOB` for technician review.
 
 ## Exit Codes And File Statuses
 

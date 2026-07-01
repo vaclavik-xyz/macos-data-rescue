@@ -87,7 +87,7 @@ uv run macos-data-rescue report --job-dir "$JOB" --format markdown > "$JOB/repor
 uv run macos-data-rescue report --job-dir "$JOB" --format json > "$JOB/report.json"
 ```
 
-`customer-report` writes a short customer-facing handoff report to the recovery root by default, next to `user-data/` as `recovery-report.pdf` or `recovery-report.md`. The detailed `report` command stays on stdout and is intended for technician notes or `.rescue` artifacts.
+`customer-report` writes a customer-facing handoff report to the recovery root by default, next to `user-data/` as `recovery-report.pdf` or `recovery-report.md`. The PDF includes a summary, copied-data status, top-level recovered folder breakdown, and Library-area breakdown when applicable. The detailed `report` command stays on stdout and is intended for technician notes or `.rescue` artifacts.
 
 ## Exit codes
 
