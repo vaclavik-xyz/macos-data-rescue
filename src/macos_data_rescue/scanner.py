@@ -192,9 +192,20 @@ class ScanLimiter:
 def iter_source_files(source: Path, *, phase: str = "all"):
     if phase == "applications":
         for scan_root, dest_prefix in application_scan_roots(source):
+            if scan_root.is_symlink():
+                entry = scanned_symlink(scan_root, (dest_prefix,), "applications", source_path=str(scan_root))
+                if entry is not None:
+                    yield entry
+                continue
             yield from iter_application_tree(scan_root, dest_prefix)
         return
     for scan_root in scan_roots(source, phase):
+        if scan_root != source and scan_root.is_symlink():
+            rel_parts = relative_parts(source, scan_root)
+            entry = scanned_symlink(scan_root, rel_parts, manifest_phase_for(rel_parts, phase))
+            if entry is not None:
+                yield entry
+            continue
         yield from iter_tree(source, scan_root, phase)
 
 
@@ -203,7 +214,7 @@ def scan_roots(source: Path, phase: str) -> tuple[Path, ...]:
         return (source,)
     if phase == "app-data":
         library = source / "Library"
-        return (library,) if is_real_directory(library) else ()
+        return (library,) if is_directory_or_symlink(library) else ()
     if phase == "important":
         names = IMPORTANT_DIRS
     elif phase == "photos":
@@ -216,11 +227,7 @@ def scan_roots(source: Path, phase: str) -> tuple[Path, ...]:
     roots = []
     for name in sorted(names):
         root = source / name
-        try:
-            info = root.stat(follow_symlinks=False)
-        except OSError:
-            continue
-        if stat.S_ISDIR(info.st_mode):
+        if is_directory_or_symlink(root):
             roots.append(root)
     return tuple(roots)
 
@@ -229,11 +236,19 @@ def application_scan_roots(source: Path) -> tuple[tuple[Path, str], ...]:
     roots: list[tuple[Path, str]] = []
     volume_applications = volume_root_for_home(source) / "Applications"
     user_applications = source / "Applications"
-    if is_real_directory(volume_applications):
+    if is_directory_or_symlink(volume_applications):
         roots.append((volume_applications, "Volume Applications"))
-    if is_real_directory(user_applications):
+    if is_directory_or_symlink(user_applications):
         roots.append((user_applications, "Home Applications"))
     return tuple(roots)
+
+
+def is_directory_or_symlink(path: Path) -> bool:
+    try:
+        info = path.stat(follow_symlinks=False)
+    except OSError:
+        return False
+    return stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
 
 
 def volume_root_for_home(source: Path) -> Path:

@@ -614,8 +614,13 @@ def test_scan_phase_app_data_does_not_follow_symlinked_library_root(tmp_path: Pa
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
 
     run_cli("scan", "--job-dir", str(job_dir), "--phase", "app-data")
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "app-data", "--timeout", "2")
 
-    assert file_rows(job_dir) == {}
+    rows = file_rows(job_dir)
+    assert sorted(rows) == ["Library"]
+    assert rows["Library"]["kind"] == "symlink"
+    assert rows["Library"]["status"] == "skipped"
+    assert not (dest_dir / "Library").exists()
 
 
 def test_scan_phase_full_home_records_visible_hidden_and_library_with_full_home_phase(tmp_path: Path) -> None:
@@ -697,8 +702,14 @@ def test_scan_phase_applications_does_not_follow_symlinked_application_roots(tmp
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
 
     run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "applications", "--timeout", "2")
 
-    assert file_rows(job_dir) == {}
+    rows = file_rows(job_dir)
+    assert sorted(rows) == ["Home Applications", "Volume Applications"]
+    assert {row["kind"] for row in rows.values()} == {"symlink"}
+    assert {row["status"] for row in rows.values()} == {"skipped"}
+    assert not (dest_dir / "Home Applications").exists()
+    assert not (dest_dir / "Volume Applications").exists()
 
 
 def test_scan_phase_applications_uses_last_users_segment_for_volume_root(tmp_path: Path) -> None:
@@ -1298,6 +1309,26 @@ def test_scan_records_directory_symlink_without_following_it(tmp_path: Path) -> 
     assert "Desktop/linked-folder/secret.txt" not in rows
     assert not (dest_dir / "Desktop" / "linked-folder").exists()
     assert (dest_dir / "Desktop" / "regular.txt").read_bytes() == b"regular"
+
+
+def test_scan_phase_important_records_symlinked_root_without_following(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    outside = tmp_path / "outside-docs"
+    write_file(outside / "secret.txt", b"host secret")
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    os.symlink(outside, source / "Documents")
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "important")
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+
+    rows = file_rows(job_dir)
+    assert sorted(rows) == ["Desktop/invoice.txt", "Documents"]
+    assert rows["Documents"]["kind"] == "symlink"
+    assert rows["Documents"]["status"] == "skipped"
+    assert not (dest_dir / "Documents").exists()
 
 
 def test_scan_applications_records_bundle_directory_symlinks(tmp_path: Path) -> None:

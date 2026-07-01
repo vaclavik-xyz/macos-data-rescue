@@ -101,21 +101,10 @@ def process_row(
     scan_warning = without_copy_xattr_warnings(row["warning"])
     summary.processed += 1
     mark_copying(job_dir, row["id"], conn=conn)
-    try:
-        dest = resolve_relative_path(dest_root, row["relative_path"], kind=row["kind"])
-        source = resolve_row_source(source_root, row)
-    except ValueError as exc:
-        mark_result(
-            job_dir,
-            row["id"],
-            "failed",
-            error=f"ValueError: {exc}",
-            warning=scan_warning,
-            conn=conn,
-        )
-        summary.failed += 1
-        return
 
+    # Non-regular rows never touch source or destination, so they are skipped
+    # before any path resolution; a symlinked application root would otherwise
+    # fail the source containment check instead of being reported as skipped.
     if row["kind"] != "file":
         note = (
             "symlink skipped to avoid following external targets"
@@ -131,6 +120,21 @@ def process_row(
             conn=conn,
         )
         summary.skipped += 1
+        return
+
+    try:
+        dest = resolve_relative_path(dest_root, row["relative_path"], kind=row["kind"])
+        source = resolve_row_source(source_root, row)
+    except ValueError as exc:
+        mark_result(
+            job_dir,
+            row["id"],
+            "failed",
+            error=f"ValueError: {exc}",
+            warning=scan_warning,
+            conn=conn,
+        )
+        summary.failed += 1
         return
 
     result = copy_one_with_timeout(source, dest, timeout, expected_size=int(row["size"]), worker=worker)
