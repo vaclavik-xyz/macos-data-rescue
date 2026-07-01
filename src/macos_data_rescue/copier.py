@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .manifest import iter_selected_files, load_config, mark_copying, mark_result, migrate_manifest
+from .manifest import connect, iter_selected_files, load_config, mark_copying, mark_result, migrate_manifest
 
 
 CHUNK_SIZE = 1024 * 1024
@@ -47,36 +47,40 @@ def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = N
     summary = CopySummary()
     attempted = 0
     handled_ids: set[int] = set()
-    for row in iter_selected_files(job_dir, phase, statuses=WORK_STATUSES):
-        if limit is not None and attempted >= limit:
-            break
-        process_row(job_dir, config.source, config.dest, row, timeout, summary)
-        handled_ids.add(int(row["id"]))
-        attempted += 1
-
-    if limit is not None and attempted >= limit:
-        return summary
-
-    for row in iter_selected_files(job_dir, phase, statuses=DONE_STATUSES):
-        if int(row["id"]) in handled_ids:
-            continue
-        try:
-            dest = resolve_relative_path(config.dest, row["relative_path"], kind=row["kind"])
-        except ValueError:
+    conn = connect(job_dir)
+    try:
+        for row in iter_selected_files(job_dir, phase, statuses=WORK_STATUSES):
             if limit is not None and attempted >= limit:
                 break
-            process_row(job_dir, config.source, config.dest, row, timeout, summary)
+            process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn)
             handled_ids.add(int(row["id"]))
             attempted += 1
-            continue
-        if row["status"] == "skipped" or destination_matches(dest, row):
-            summary.skipped += 1
-            continue
+
         if limit is not None and attempted >= limit:
-            break
-        process_row(job_dir, config.source, config.dest, row, timeout, summary)
-        handled_ids.add(int(row["id"]))
-        attempted += 1
+            return summary
+
+        for row in iter_selected_files(job_dir, phase, statuses=DONE_STATUSES):
+            if int(row["id"]) in handled_ids:
+                continue
+            try:
+                dest = resolve_relative_path(config.dest, row["relative_path"], kind=row["kind"])
+            except ValueError:
+                if limit is not None and attempted >= limit:
+                    break
+                process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn)
+                handled_ids.add(int(row["id"]))
+                attempted += 1
+                continue
+            if row["status"] == "skipped" or destination_matches(dest, row):
+                summary.skipped += 1
+                continue
+            if limit is not None and attempted >= limit:
+                break
+            process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn)
+            handled_ids.add(int(row["id"]))
+            attempted += 1
+    finally:
+        conn.close()
     return summary
 
 
@@ -87,10 +91,12 @@ def process_row(
     row: Any,
     timeout: float,
     summary: CopySummary,
+    *,
+    conn=None,
 ) -> None:
     scan_warning = without_copy_xattr_warnings(row["warning"])
     summary.processed += 1
-    mark_copying(job_dir, row["id"])
+    mark_copying(job_dir, row["id"], conn=conn)
     try:
         dest = resolve_relative_path(dest_root, row["relative_path"], kind=row["kind"])
         source = resolve_row_source(source_root, row)
@@ -101,6 +107,7 @@ def process_row(
             "failed",
             error=f"ValueError: {exc}",
             warning=scan_warning,
+            conn=conn,
         )
         summary.failed += 1
         return
@@ -117,6 +124,7 @@ def process_row(
             "skipped",
             error=note,
             warning=scan_warning,
+            conn=conn,
         )
         summary.skipped += 1
         return
@@ -131,10 +139,11 @@ def process_row(
             "copied",
             copied_bytes=copied_bytes,
             warning=combine_warnings(scan_warning, result.get("warning")),
+            conn=conn,
         )
         summary.copied += 1
     elif status == "timed_out":
-        mark_result(job_dir, row["id"], "timed_out", error=str(result["error"]), warning=scan_warning)
+        mark_result(job_dir, row["id"], "timed_out", error=str(result["error"]), warning=scan_warning, conn=conn)
         summary.timed_out += 1
     else:
         copied_bytes = int(result.get("copied_bytes", 0))
@@ -145,6 +154,7 @@ def process_row(
             error=str(result["error"]),
             copied_bytes=copied_bytes,
             warning=scan_warning,
+            conn=conn,
         )
         summary.failed += 1
 

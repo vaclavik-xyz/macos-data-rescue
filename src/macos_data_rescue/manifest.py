@@ -428,8 +428,10 @@ def fetch_selected_batch(
         conn.close()
 
 
-def mark_copying(job_dir: Path, file_id: int) -> None:
-    conn = connect(job_dir)
+def mark_copying(job_dir: Path, file_id: int, *, conn: sqlite3.Connection | None = None) -> None:
+    owns_conn = conn is None
+    if conn is None:
+        conn = connect(job_dir)
     now = utc_now()
     try:
         conn.execute(
@@ -447,7 +449,8 @@ def mark_copying(job_dir: Path, file_id: int) -> None:
         )
         conn.commit()
     finally:
-        conn.close()
+        if owns_conn:
+            conn.close()
 
 
 def mark_result(
@@ -458,8 +461,11 @@ def mark_result(
     error: str | None = None,
     warning=WARNING_UNCHANGED,
     copied_bytes: int = 0,
+    conn: sqlite3.Connection | None = None,
 ) -> None:
-    conn = connect(job_dir)
+    owns_conn = conn is None
+    if conn is None:
+        conn = connect(job_dir)
     now = utc_now()
     try:
         if warning is WARNING_UNCHANGED:
@@ -491,7 +497,8 @@ def mark_result(
             )
         conn.commit()
     finally:
-        conn.close()
+        if owns_conn:
+            conn.close()
 
 
 def status_summary(job_dir: Path) -> dict[str, dict[str, int]]:

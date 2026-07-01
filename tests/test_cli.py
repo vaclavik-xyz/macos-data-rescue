@@ -1360,6 +1360,57 @@ def test_resume_limit_reaches_copied_file_with_missing_destination(tmp_path: Pat
     assert (dest_dir / "Desktop" / "b.txt").read_bytes() == b"b"
 
 
+def test_mark_helpers_reuse_provided_connection(tmp_path: Path) -> None:
+    from macos_data_rescue import manifest
+
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "a.txt", b"a")
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+    file_id = int(file_rows(job_dir)["Desktop/a.txt"]["id"])
+
+    conn = manifest.connect(job_dir)
+    try:
+        manifest.mark_copying(job_dir, file_id, conn=conn)
+        manifest.mark_result(job_dir, file_id, "copied", copied_bytes=1, conn=conn)
+        status = conn.execute("select status from files where id = ?", (file_id,)).fetchone()[0]
+    finally:
+        conn.close()
+
+    assert status == "copied"
+    assert file_rows(job_dir)["Desktop/a.txt"]["status"] == "copied"
+
+
+def test_copy_job_connection_count_does_not_scale_with_file_count(tmp_path: Path, monkeypatch) -> None:
+    from macos_data_rescue import copier, manifest
+
+    def count_connects(job_dir: Path) -> int:
+        source = job_dir.parent / "source-home"
+        counter = {"connects": 0}
+        original_connect = manifest.connect
+
+        def counting_connect(target: Path):
+            counter["connects"] += 1
+            return original_connect(target)
+
+        monkeypatch.setattr(manifest, "connect", counting_connect)
+        try:
+            copier.copy_job(job_dir, phase="important", timeout=2)
+        finally:
+            monkeypatch.setattr(manifest, "connect", original_connect)
+        return counter["connects"]
+
+    small = tmp_path / "small"
+    write_file(small / "source-home" / "Desktop" / "a.txt", b"a")
+    small_job, _, _ = init_and_scan(small, small / "source-home")
+
+    large = tmp_path / "large"
+    for index in range(5):
+        write_file(large / "source-home" / "Desktop" / f"{index}.txt", b"x")
+    large_job, _, _ = init_and_scan(large, large / "source-home")
+
+    assert count_connects(large_job) == count_connects(small_job)
+
+
 def test_manifest_selected_files_are_streamed(tmp_path: Path) -> None:
     from macos_data_rescue.manifest import iter_selected_files
 
