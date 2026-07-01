@@ -909,6 +909,8 @@ def fsync_directory(path: Path) -> None:
         return
     try:
         os.fsync(fd)
+    except OSError:
+        pass
     finally:
         os.close(fd)
 

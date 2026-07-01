@@ -1787,6 +1787,28 @@ def test_customer_report_preserves_existing_file_when_atomic_replace_fails(tmp_p
     assert not list(tmp_path.glob("*.rescue-report-tmp"))
 
 
+def test_customer_report_survives_directory_fsync_failure(tmp_path: Path, monkeypatch) -> None:
+    from macos_data_rescue import reporting
+
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+    output_path = tmp_path / "recovery-report.md"
+    original_fsync = os.fsync
+
+    def failing_directory_fsync(fd: int) -> None:
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError("simulated directory fsync failure")
+        original_fsync(fd)
+
+    monkeypatch.setattr(reporting.os, "fsync", failing_directory_fsync)
+
+    written = reporting.write_customer_report(job_dir, "markdown", output_path)
+
+    assert written == output_path
+    assert "# Data Recovery Report" in output_path.read_text()
+
+
 def test_customer_report_temp_write_does_not_follow_stale_symlink_into_source(tmp_path: Path) -> None:
     from macos_data_rescue import reporting
 
