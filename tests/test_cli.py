@@ -1696,6 +1696,30 @@ def test_customer_report_writes_czech_markdown_and_pdf_without_overwriting_engli
     assert b"/ccaron" in czech_pdf_bytes
 
 
+def test_format_size_uses_adaptive_units() -> None:
+    from macos_data_rescue.reporting import format_size
+
+    assert format_size(0) == "0 B"
+    assert format_size(999) == "999 B"
+    assert format_size(2048) == "2.0 KiB"
+    assert format_size(5 * 1024**2) == "5.0 MiB"
+    assert format_size(3 * 1024**3) == "3.0 GiB"
+    assert format_size(2 * 1024**4) == "2.0 TiB"
+
+
+def test_customer_report_shows_small_sizes_with_adaptive_units(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"x" * 2048)
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+
+    run_cli("customer-report", "--job-dir", str(job_dir), "--format", "markdown")
+
+    markdown = (tmp_path / "recovery-report.md").read_text()
+    assert "| Desktop | 1 | 2.0 KiB |" in markdown
+    assert "0.0 GiB" not in markdown
+
+
 def test_customer_report_rejects_output_inside_source(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     write_file(source / "Desktop" / "invoice.txt", b"desktop")

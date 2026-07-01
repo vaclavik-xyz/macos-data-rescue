@@ -431,7 +431,7 @@ def customer_markdown_report(job_dir: Path, text: CustomerReportText | None = No
             f"| {text.pending_files} | {pending} |",
             f"| {text.skipped_entries} | {summary['skipped']['count']} |",
             "",
-            f"{text.copied_data_recorded}: {format_gib(copied_bytes)}  ",
+            f"{text.copied_data_recorded}: {format_size(copied_bytes)}  ",
             "",
             f"## {text.what_recovered}",
             "",
@@ -453,7 +453,7 @@ def customer_markdown_report(job_dir: Path, text: CustomerReportText | None = No
             ]
         )
         for label, count, size in breakdown:
-            lines.append(f"| {markdown_table_cell(label)} | {count} | {format_gib(size)} |")
+            lines.append(f"| {markdown_table_cell(label)} | {count} | {format_size(size)} |")
     else:
         lines.append(text.no_copied_content)
     if library_breakdown:
@@ -467,7 +467,7 @@ def customer_markdown_report(job_dir: Path, text: CustomerReportText | None = No
             ]
         )
         for label, count, size in library_breakdown:
-            lines.append(f"| {markdown_table_cell(label)} | {count} | {format_gib(size)} |")
+            lines.append(f"| {markdown_table_cell(label)} | {count} | {format_size(size)} |")
     lines.extend(
         [
             "",
@@ -523,7 +523,7 @@ def customer_pdf_bytes(job_dir: Path, text: CustomerReportText | None = None) ->
     canvas.metric_cards(
         (
             (text.copied_files, str(summary["copied"]["count"])),
-            (text.copied_data_metric, format_gib(summary["copied"]["bytes"])),
+            (text.copied_data_metric, format_size(summary["copied"]["bytes"])),
             (text.unresolved_metric, str(unresolved)),
         )
     )
@@ -546,14 +546,14 @@ def customer_pdf_bytes(job_dir: Path, text: CustomerReportText | None = None) ->
     )
     canvas.section(text.breakdown)
     breakdown_rows = tuple(
-        (label, str(count), format_gib(size)) for label, count, size in recovered_top_level_breakdown(rows)
+        (label, str(count), format_size(size)) for label, count, size in recovered_top_level_breakdown(rows)
     )
     if breakdown_rows:
         canvas.table((text.folder, text.files, text.size), breakdown_rows, (240, 80, 130))
     else:
         canvas.paragraph(text.no_copied_content)
     library_rows = tuple(
-        (label, str(count), format_gib(size)) for label, count, size in recovered_library_breakdown(rows)
+        (label, str(count), format_size(size)) for label, count, size in recovered_library_breakdown(rows)
     )
     if library_rows:
         canvas.section(text.library_breakdown)
@@ -1054,8 +1054,15 @@ def pdf_safe_text(text: str) -> str:
     return "".join(safe_chars)
 
 
-def format_gib(bytes_count: int) -> str:
-    return f"{bytes_count / 1024 / 1024 / 1024:.1f} GiB"
+def format_size(bytes_count: int) -> str:
+    if bytes_count < 1024:
+        return f"{bytes_count} B"
+    value = float(bytes_count)
+    for unit in ("KiB", "MiB", "GiB", "TiB"):
+        value /= 1024
+        if value < 1024 or unit == "TiB":
+            return f"{value:.1f} {unit}"
+    raise AssertionError("unreachable")
 
 
 def normalized_summary(job_dir: Path) -> dict[str, dict[str, int]]:
