@@ -881,88 +881,6 @@ def pdf_num(value: float) -> str:
     return f"{value:.3f}".rstrip("0").rstrip(".")
 
 
-def customer_text_lines(markdown: str) -> list[str]:
-    lines: list[str] = []
-    for line in markdown.splitlines():
-        if line.startswith("# "):
-            lines.append(line[2:])
-        elif line.startswith("## "):
-            lines.append("")
-            lines.append(line[3:])
-        elif line.startswith("| ---"):
-            continue
-        elif line.startswith("| ") and line.endswith(" |"):
-            parts = [part.strip() for part in line.strip("|").split("|")]
-            if len(parts) == 2:
-                lines.append(f"{parts[0]}: {parts[1]}")
-            else:
-                lines.append("  ".join(parts))
-        elif line.startswith("- "):
-            lines.append(f"* {line[2:]}")
-        elif line.startswith("`") and line.endswith("`"):
-            lines.append(line.strip("`"))
-        else:
-            lines.append(line.replace("`", ""))
-    return lines
-
-
-def write_simple_pdf(path: Path, lines: list[str]) -> None:
-    atomic_write_bytes(path, simple_pdf_bytes(lines))
-
-
-def simple_pdf_bytes(lines: list[str]) -> bytes:
-    page_width = 595
-    page_height = 842
-    left = 50
-    top = 790
-    leading = 14
-    max_chars = 92
-    wrapped = wrap_pdf_lines(lines, max_chars)
-    lines_per_page = max(1, int((top - 50) / leading))
-    pages = [wrapped[index : index + lines_per_page] for index in range(0, len(wrapped), lines_per_page)]
-    if not pages:
-        pages = [[]]
-
-    objects: list[bytes] = []
-    objects.append(b"<< /Type /Catalog /Pages 2 0 R >>")
-    page_object_ids = [4 + index * 2 for index in range(len(pages))]
-    kids = b" ".join(f"{object_id} 0 R".encode("ascii") for object_id in page_object_ids)
-    objects.append(f"<< /Type /Pages /Kids [{kids.decode('ascii')}] /Count {len(pages)} >>".encode("ascii"))
-    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
-
-    for index, page_lines in enumerate(pages):
-        page_id = page_object_ids[index]
-        content_id = page_id + 1
-        objects.append(
-            (
-                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width} {page_height}] "
-                f"/Resources << /Font << /F1 3 0 R >> >> /Contents {content_id} 0 R >>"
-            ).encode("ascii")
-        )
-        stream = pdf_text_stream(page_lines, left, top, leading)
-        objects.append(b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream")
-
-    pdf = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
-    offsets = [0]
-    for object_id, obj in enumerate(objects, start=1):
-        offsets.append(len(pdf))
-        pdf.extend(f"{object_id} 0 obj\n".encode("ascii"))
-        pdf.extend(obj)
-        pdf.extend(b"\nendobj\n")
-    xref_offset = len(pdf)
-    pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
-    pdf.extend(b"0000000000 65535 f \n")
-    for offset in offsets[1:]:
-        pdf.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
-    pdf.extend(
-        (
-            f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
-            f"startxref\n{xref_offset}\n%%EOF\n"
-        ).encode("ascii")
-    )
-    return bytes(pdf)
-
-
 def atomic_write_bytes(path: Path, content: bytes) -> None:
     fd, temp_name = tempfile.mkstemp(
         prefix=f".{path.name}.",
@@ -1010,20 +928,6 @@ def wrap_pdf_lines(lines: list[str], max_chars: int) -> list[str]:
             current = current[split_at:].lstrip()
         wrapped.append(current)
     return wrapped
-
-
-def pdf_text_stream(lines: list[str], left: int, top: int, leading: int) -> bytes:
-    commands = [
-        "BT",
-        "/F1 11 Tf",
-        f"{leading} TL",
-        f"{left} {top} Td",
-    ]
-    for line in lines:
-        commands.append(f"({pdf_escape(line)}) Tj")
-        commands.append("T*")
-    commands.append("ET")
-    return "\n".join(commands).encode("latin-1")
 
 
 def pdf_escape(text: str) -> str:
