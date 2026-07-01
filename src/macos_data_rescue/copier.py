@@ -102,12 +102,17 @@ def process_row(
         summary.failed += 1
         return
 
-    if row["kind"] == "symlink":
+    if row["kind"] != "file":
+        note = (
+            "symlink skipped to avoid following external targets"
+            if row["kind"] == "symlink"
+            else f"{row['kind']} skipped: not a regular file"
+        )
         mark_result(
             job_dir,
             row["id"],
             "skipped",
-            error="symlink skipped to avoid following external targets",
+            error=note,
             warning=scan_warning,
         )
         summary.skipped += 1

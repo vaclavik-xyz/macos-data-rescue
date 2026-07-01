@@ -12,6 +12,7 @@ The goal is simple: **one bad file must not stop the whole rescue**. The tool sc
 - `copy` / `resume` copy file-by-file through an isolated worker process.
 - Per-file timeout marks stuck files as `timed_out` and continues.
 - Symlinks are skipped instead of followed, to avoid copying unrelated technician-host paths.
+- Other non-regular files (FIFOs, sockets, devices) are recorded and skipped instead of copied, so they cannot stall the copy phase.
 - Destination writes use unique temp files in the destination directory, then atomic `os.replace`.
 - A file is marked `copied` only after the worker copies the expected byte count from the manifest.
 - macOS extended attributes and resource forks are copied best-effort with a native libSystem xattr backend.

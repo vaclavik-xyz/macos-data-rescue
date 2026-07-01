@@ -1148,6 +1148,31 @@ def test_copy_summary_does_not_count_freshly_copied_files_as_skipped(tmp_path: P
     assert "skipped=0" in result.stdout
 
 
+def test_copy_skips_fifo_without_burning_timeout(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    (source / "Desktop").mkdir(parents=True)
+    os.mkfifo(source / "Desktop" / "stuck.fifo")
+    write_file(source / "Desktop" / "regular.txt", b"regular")
+
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+    copy = run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "5")
+    first_row = file_rows(job_dir)["Desktop/stuck.fifo"]
+    resume = run_cli("resume", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "5")
+    second_row = file_rows(job_dir)["Desktop/stuck.fifo"]
+
+    assert first_row["kind"] == "fifo"
+    assert first_row["status"] == "skipped"
+    assert "not a regular file" in first_row["error"]
+    assert "skipped=1" in copy.stdout
+    assert "timed_out=0" in copy.stdout
+    # resume: fifo stays skipped, regular.txt verifies as already copied
+    assert "skipped=2" in resume.stdout
+    assert "processed=0" in resume.stdout
+    assert second_row["attempts"] == first_row["attempts"]
+    assert not (dest_dir / "Desktop" / "stuck.fifo").exists()
+    assert (dest_dir / "Desktop" / "regular.txt").read_bytes() == b"regular"
+
+
 def test_timeout_and_failure_mark_file_and_continue_to_next_file(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     (source / "Desktop").mkdir(parents=True)
@@ -1157,6 +1182,14 @@ def test_timeout_and_failure_mark_file_and_continue_to_next_file(tmp_path: Path)
     write_file(source / "Desktop" / "ccc-after.txt", b"after")
 
     job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+    conn = sqlite3.connect(job_dir / "manifest.sqlite")
+    try:
+        # Simulate a regular file whose read hangs in the kernel: the fifo blocks
+        # open()/read() exactly like a severe disk I/O hang would.
+        conn.execute("update files set kind = 'file' where relative_path = 'Desktop/aaa-stuck'")
+        conn.commit()
+    finally:
+        conn.close()
     run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "0.2")
 
     rows = file_rows(job_dir)
