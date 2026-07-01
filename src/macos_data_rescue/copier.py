@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import ctypes
 import multiprocessing
+import multiprocessing.process
 import os
-import queue
 import stat
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -48,11 +49,12 @@ def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = N
     attempted = 0
     handled_ids: set[int] = set()
     conn = connect(job_dir)
+    worker = CopyWorker()
     try:
         for row in iter_selected_files(job_dir, phase, statuses=WORK_STATUSES):
             if limit is not None and attempted >= limit:
                 break
-            process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn)
+            process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker)
             handled_ids.add(int(row["id"]))
             attempted += 1
 
@@ -67,7 +69,7 @@ def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = N
             except ValueError:
                 if limit is not None and attempted >= limit:
                     break
-                process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn)
+                process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker)
                 handled_ids.add(int(row["id"]))
                 attempted += 1
                 continue
@@ -76,10 +78,11 @@ def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = N
                 continue
             if limit is not None and attempted >= limit:
                 break
-            process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn)
+            process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker)
             handled_ids.add(int(row["id"]))
             attempted += 1
     finally:
+        worker.close()
         conn.close()
     return summary
 
@@ -93,6 +96,7 @@ def process_row(
     summary: CopySummary,
     *,
     conn=None,
+    worker: CopyWorker | None = None,
 ) -> None:
     scan_warning = without_copy_xattr_warnings(row["warning"])
     summary.processed += 1
@@ -129,7 +133,7 @@ def process_row(
         summary.skipped += 1
         return
 
-    result = copy_one_with_timeout(source, dest, timeout, expected_size=int(row["size"]))
+    result = copy_one_with_timeout(source, dest, timeout, expected_size=int(row["size"]), worker=worker)
     status = str(result["status"])
     if status == "copied":
         copied_bytes = int(result.get("copied_bytes", 0))
@@ -257,49 +261,164 @@ def destination_matches(dest: Path, row: Any) -> bool:
     return abs(info.st_mtime_ns - int(row["mtime_ns"])) <= DEST_MTIME_TOLERANCE_NS
 
 
-def copy_one_with_timeout(source: Path, dest: Path, timeout: float, *, expected_size: int) -> dict[str, object]:
-    ctx = multiprocessing.get_context("spawn")
-    result_queue = ctx.Queue(maxsize=1)
+def copy_one_with_timeout(
+    source: Path,
+    dest: Path,
+    timeout: float,
+    *,
+    expected_size: int,
+    worker: CopyWorker | None = None,
+) -> dict[str, object]:
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         temp = make_temp_path(dest)
     except OSError as exc:
         return {"status": "failed", "error": f"{type(exc).__name__}: {exc}", "copied_bytes": 0}
-    process = ctx.Process(
-        target=_copy_file_child,
-        args=(str(source), str(dest), str(temp), expected_size, result_queue),
-    )
-    process.start()
-    process.join(timeout)
-    if process.is_alive():
-        process.kill()
-        process.join(1)
+    owns_worker = worker is None
+    if worker is None:
+        worker = CopyWorker()
+    try:
+        result = worker.copy_one(source, dest, temp, expected_size, timeout)
+    finally:
+        if owns_worker:
+            worker.close()
+    if str(result.get("status")) != "copied":
         cleanup_path(temp)
-        if process.is_alive():
+    return result
+
+
+class CopyWorker:
+    """One long-lived spawn worker copying files sequentially.
+
+    The worker is killed and replaced when a file hits its timeout or when
+    it dies mid-job, so one hung or crashed copy never poisons later files.
+    A fresh pipe is created with every worker generation; a killed worker
+    can never leave partial garbage in the channel of its successor.
+    """
+
+    def __init__(self) -> None:
+        self._ctx = multiprocessing.get_context("spawn")
+        self._process: multiprocessing.process.BaseProcess | None = None
+        self._conn = None
+
+    def copy_one(
+        self,
+        source: Path,
+        dest: Path,
+        temp: Path,
+        expected_size: int,
+        timeout: float,
+    ) -> dict[str, object]:
+        for _attempt in range(2):
+            try:
+                self._ensure_worker()
+                self._conn.send((str(source), str(dest), str(temp), int(expected_size)))
+            except OSError:
+                self._discard()
+                continue
+            return self._wait_result(timeout)
+        return {"status": "failed", "error": "copy worker could not be started", "copied_bytes": 0}
+
+    def close(self) -> None:
+        process, conn = self._process, self._conn
+        self._process = None
+        self._conn = None
+        if conn is not None:
+            try:
+                conn.send(None)
+            except OSError:
+                pass
+            try:
+                conn.close()
+            except OSError:
+                pass
+        if process is not None:
+            process.join(1)
+            if process.is_alive():
+                process.kill()
+                process.join(1)
+
+    def _ensure_worker(self) -> None:
+        if self._process is not None and self._process.is_alive():
+            return
+        self._discard()
+        parent_conn, child_conn = self._ctx.Pipe()
+        process = self._ctx.Process(target=_copy_worker_loop, args=(child_conn,), daemon=True)
+        process.start()
+        # The parent must drop its copy of the child end, or a dead worker
+        # would never surface as EOF on parent_conn.
+        child_conn.close()
+        self._process = process
+        self._conn = parent_conn
+
+    def _discard(self) -> None:
+        process, conn = self._process, self._conn
+        self._process = None
+        self._conn = None
+        if conn is not None:
+            try:
+                conn.close()
+            except OSError:
+                pass
+        if process is not None:
+            if process.is_alive():
+                process.kill()
+            process.join(1)
+
+    def _wait_result(self, timeout: float) -> dict[str, object]:
+        conn = self._conn
+        process = self._process
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return self._timed_out_result(timeout)
+            try:
+                ready = conn.poll(remaining)
+            except OSError:
+                ready = True
+            if ready:
+                break
+        try:
+            result = conn.recv()
+        except (EOFError, OSError):
+            process.join(1)
+            exitcode = process.exitcode
+            self._discard()
+            if exitcode == 0:
+                return {"status": "failed", "error": "copy worker exited without a result"}
+            return {"status": "failed", "error": f"copy worker exited with code {exitcode}"}
+        return result
+
+    def _timed_out_result(self, timeout: float) -> dict[str, object]:
+        process = self._process
+        self._discard()
+        if process is not None and process.is_alive():
             return {
                 "status": "timed_out",
                 "error": f"copy timed out after {timeout:g} seconds; worker did not exit after kill",
             }
         return {"status": "timed_out", "error": f"copy timed out after {timeout:g} seconds"}
 
-    try:
-        return result_queue.get_nowait()
-    except queue.Empty:
-        if process.exitcode == 0:
-            return {"status": "failed", "error": "copy worker exited without a result"}
-        return {"status": "failed", "error": f"copy worker exited with code {process.exitcode}"}
+
+def _copy_worker_loop(conn) -> None:
+    while True:
+        try:
+            job = conn.recv()
+        except (EOFError, OSError, KeyboardInterrupt):
+            return
+        if job is None:
+            return
+        source_text, dest_text, temp_text, expected_size = job
+        result = _copy_one_in_worker(Path(source_text), Path(dest_text), Path(temp_text), expected_size)
+        result["worker_pid"] = os.getpid()
+        try:
+            conn.send(result)
+        except (EOFError, OSError, KeyboardInterrupt):
+            return
 
 
-def _copy_file_child(
-    source_text: str,
-    dest_text: str,
-    temp_text: str,
-    expected_size: int,
-    result_queue: multiprocessing.Queue,
-) -> None:
-    source = Path(source_text)
-    dest = Path(dest_text)
-    temp = Path(temp_text)
+def _copy_one_in_worker(source: Path, dest: Path, temp: Path, expected_size: int) -> dict[str, object]:
     copied_bytes = 0
     try:
         with source.open("rb") as src, temp.open("wb") as dst:
@@ -313,25 +432,22 @@ def _copy_file_child(
             os.fsync(dst.fileno())
         if copied_bytes != expected_size:
             cleanup_path(temp)
-            result_queue.put(
-                {
-                    "status": "failed",
-                    "error": f"incomplete copy: expected {expected_size} bytes, copied {copied_bytes} bytes",
-                    "copied_bytes": copied_bytes,
-                }
-            )
-            return
+            return {
+                "status": "failed",
+                "error": f"incomplete copy: expected {expected_size} bytes, copied {copied_bytes} bytes",
+                "copied_bytes": copied_bytes,
+            }
         xattr_warning = copy_xattrs(source, temp)
         copy_basic_metadata(source, temp)
         os.replace(temp, dest)
         fsync_directory(dest.parent)
-        result = {"status": "copied", "copied_bytes": copied_bytes}
+        result: dict[str, object] = {"status": "copied", "copied_bytes": copied_bytes}
         if xattr_warning:
             result["warning"] = xattr_warning
-        result_queue.put(result)
+        return result
     except BaseException as exc:
         cleanup_path(temp)
-        result_queue.put({"status": "failed", "error": f"{type(exc).__name__}: {exc}"})
+        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
 
 
 def make_temp_path(dest: Path) -> Path:

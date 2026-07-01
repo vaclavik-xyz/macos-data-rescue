@@ -1019,7 +1019,7 @@ def test_xattr_copy_helper_reads_source_and_writes_destination_only(tmp_path: Pa
 def test_xattr_copy_failure_marks_per_file_warning_without_failing_content(tmp_path: Path, monkeypatch) -> None:
     from macos_data_rescue import copier
 
-    def fake_copy_one_with_timeout(source: Path, dest: Path, timeout: float, *, expected_size: int) -> dict[str, object]:
+    def fake_copy_one_with_timeout(source: Path, dest: Path, timeout: float, *, expected_size: int, **_kwargs) -> dict[str, object]:
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(source.read_bytes())
         return {
@@ -1056,7 +1056,7 @@ def test_xattr_copy_warning_is_scoped_to_current_attempt(tmp_path: Path, monkeyp
         {"status": "copied"},
     ]
 
-    def fake_copy_one_with_timeout(source: Path, dest: Path, timeout: float, *, expected_size: int) -> dict[str, object]:
+    def fake_copy_one_with_timeout(source: Path, dest: Path, timeout: float, *, expected_size: int, **_kwargs) -> dict[str, object]:
         outcome = outcomes.pop(0)
         if outcome["status"] == "copied":
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1358,6 +1358,85 @@ def test_resume_limit_reaches_copied_file_with_missing_destination(tmp_path: Pat
 
     assert (dest_dir / "Desktop" / "a.txt").read_bytes() == b"a"
     assert (dest_dir / "Desktop" / "b.txt").read_bytes() == b"b"
+
+
+def test_copy_worker_reuses_one_process_across_files(tmp_path: Path) -> None:
+    from macos_data_rescue import copier
+
+    worker = copier.CopyWorker()
+    results = []
+    try:
+        for name in ("a", "b", "c"):
+            source = tmp_path / f"{name}.txt"
+            source.write_bytes(b"x")
+            dest = tmp_path / "out" / f"{name}.txt"
+            dest.parent.mkdir(exist_ok=True)
+            temp = copier.make_temp_path(dest)
+            results.append(worker.copy_one(source, dest, temp, 1, timeout=10))
+    finally:
+        worker.close()
+
+    assert [result["status"] for result in results] == ["copied", "copied", "copied"]
+    assert (tmp_path / "out" / "a.txt").read_bytes() == b"x"
+    pids = {result["worker_pid"] for result in results}
+    assert len(pids) == 1
+    assert pids != {os.getpid()}
+
+
+def test_copy_worker_recovers_after_worker_death(tmp_path: Path) -> None:
+    from macos_data_rescue import copier
+
+    worker = copier.CopyWorker()
+    try:
+        worker._ensure_worker()
+        worker._process.kill()
+        worker._process.join()
+
+        source = tmp_path / "a.txt"
+        source.write_bytes(b"x")
+        dest = tmp_path / "out" / "a.txt"
+        dest.parent.mkdir()
+        temp = copier.make_temp_path(dest)
+        result = worker.copy_one(source, dest, temp, 1, timeout=10)
+    finally:
+        worker.close()
+
+    assert result["status"] == "copied"
+    assert dest.read_bytes() == b"x"
+
+
+def test_copy_worker_reports_mid_job_crash_as_failure_and_recovers(tmp_path: Path) -> None:
+    import threading
+
+    from macos_data_rescue import copier
+
+    worker = copier.CopyWorker()
+    try:
+        stuck = tmp_path / "stuck.fifo"
+        os.mkfifo(stuck)
+        dest = tmp_path / "out" / "stuck"
+        dest.parent.mkdir()
+        temp = copier.make_temp_path(dest)
+
+        killer = threading.Timer(0.3, lambda: worker._process.kill())
+        killer.start()
+        try:
+            crashed = worker.copy_one(stuck, dest, temp, 1, timeout=30)
+        finally:
+            killer.cancel()
+
+        source = tmp_path / "after.txt"
+        source.write_bytes(b"x")
+        after_dest = tmp_path / "out" / "after.txt"
+        after_temp = copier.make_temp_path(after_dest)
+        recovered = worker.copy_one(source, after_dest, after_temp, 1, timeout=10)
+    finally:
+        worker.close()
+
+    assert crashed["status"] == "failed"
+    assert "copy worker exited" in crashed["error"]
+    assert recovered["status"] == "copied"
+    assert after_dest.read_bytes() == b"x"
 
 
 def test_mark_helpers_reuse_provided_connection(tmp_path: Path) -> None:
