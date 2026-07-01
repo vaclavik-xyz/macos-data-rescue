@@ -1137,6 +1137,47 @@ def test_resume_skips_already_copied_files_with_matching_source_metadata(tmp_pat
     assert "skipped=1" in result.stdout
 
 
+def test_resume_tolerates_coarse_destination_mtime_granularity(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+    before = file_rows(job_dir)["Desktop/invoice.txt"]
+
+    # Simulate an exFAT/FAT destination: stored mtime is rounded to a coarse
+    # granularity, so it no longer equals the manifest mtime_ns exactly.
+    dest_file = dest_dir / "Desktop" / "invoice.txt"
+    info = dest_file.stat()
+    coarse_mtime_ns = (info.st_mtime_ns // 2_000_000_000) * 2_000_000_000
+    os.utime(dest_file, ns=(info.st_atime_ns, coarse_mtime_ns))
+
+    result = run_cli("resume", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+
+    after = file_rows(job_dir)["Desktop/invoice.txt"]
+    assert "skipped=1" in result.stdout
+    assert "processed=0" in result.stdout
+    assert after["attempts"] == before["attempts"]
+
+
+def test_resume_still_recopies_destination_with_clearly_different_mtime(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+    before = file_rows(job_dir)["Desktop/invoice.txt"]
+
+    dest_file = dest_dir / "Desktop" / "invoice.txt"
+    info = dest_file.stat()
+    os.utime(dest_file, ns=(info.st_atime_ns, info.st_mtime_ns - 60_000_000_000))
+
+    result = run_cli("resume", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+
+    after = file_rows(job_dir)["Desktop/invoice.txt"]
+    assert "processed=1" in result.stdout
+    assert "copied=1" in result.stdout
+    assert after["attempts"] == before["attempts"] + 1
+
+
 def test_copy_summary_does_not_count_freshly_copied_files_as_skipped(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     write_file(source / "Desktop" / "invoice.txt", b"desktop")

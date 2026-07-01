@@ -15,6 +15,9 @@ from .manifest import iter_selected_files, load_config, mark_copying, mark_resul
 
 CHUNK_SIZE = 1024 * 1024
 RESCUE_TMP_SUFFIX = ".rescue-tmp"
+# FAT stores mtimes with 2-second resolution and exFAT with 10 ms, so a
+# destination on a recovery SSD can round the mtime copy_basic_metadata set.
+DEST_MTIME_TOLERANCE_NS = 2_000_000_000
 WORK_STATUSES = ("pending", "copying", "failed", "timed_out")
 DONE_STATUSES = ("copied", "skipped")
 XATTR_NOFOLLOW = 0x0001
@@ -239,7 +242,9 @@ def destination_matches(dest: Path, row: Any) -> bool:
         info = dest.lstat() if row["kind"] == "symlink" else dest.stat()
     except OSError:
         return False
-    return info.st_size == row["size"] and info.st_mtime_ns == row["mtime_ns"]
+    if info.st_size != row["size"]:
+        return False
+    return abs(info.st_mtime_ns - int(row["mtime_ns"])) <= DEST_MTIME_TOLERANCE_NS
 
 
 def copy_one_with_timeout(source: Path, dest: Path, timeout: float, *, expected_size: int) -> dict[str, object]:
