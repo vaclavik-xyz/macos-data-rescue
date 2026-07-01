@@ -1384,7 +1384,6 @@ def test_copy_job_connection_count_does_not_scale_with_file_count(tmp_path: Path
     from macos_data_rescue import copier, manifest
 
     def count_connects(job_dir: Path) -> int:
-        source = job_dir.parent / "source-home"
         counter = {"connects": 0}
         original_connect = manifest.connect
 
@@ -1393,10 +1392,12 @@ def test_copy_job_connection_count_does_not_scale_with_file_count(tmp_path: Path
             return original_connect(target)
 
         monkeypatch.setattr(manifest, "connect", counting_connect)
+        monkeypatch.setattr(copier, "connect", counting_connect)
         try:
             copier.copy_job(job_dir, phase="important", timeout=2)
         finally:
             monkeypatch.setattr(manifest, "connect", original_connect)
+            monkeypatch.setattr(copier, "connect", original_connect)
         return counter["connects"]
 
     small = tmp_path / "small"
