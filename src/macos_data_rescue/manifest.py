@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -190,7 +191,30 @@ def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobC
 
 
 def is_same_or_inside(candidate: Path, parent: Path) -> bool:
-    return candidate == parent or parent in candidate.parents
+    if candidate == parent or parent in candidate.parents:
+        return True
+    return has_ancestor_with_same_inode(candidate, parent)
+
+
+def has_ancestor_with_same_inode(candidate: Path, parent: Path) -> bool:
+    """Inode-based containment for paths the string comparison cannot catch.
+
+    macOS volumes are case-insensitive by default, so `/volumes/ssd/x` is the
+    same directory as `/Volumes/SSD/x` while comparing unequal as strings.
+    Missing ancestors (dest may not exist yet) are skipped.
+    """
+    try:
+        parent_info = parent.stat()
+    except OSError:
+        return False
+    for ancestor in (candidate, *candidate.parents):
+        try:
+            info = ancestor.stat()
+        except OSError:
+            continue
+        if os.path.samestat(info, parent_info):
+            return True
+    return False
 
 
 def load_config(job_dir: Path) -> JobConfig:

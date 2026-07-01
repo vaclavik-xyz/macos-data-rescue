@@ -108,6 +108,30 @@ def test_init_rejects_job_or_dest_inside_source(tmp_path: Path) -> None:
     assert not dest_inside.exists()
 
 
+def test_init_rejects_dest_inside_source_spelled_with_different_case(tmp_path: Path) -> None:
+    source = tmp_path / "Source-Home"
+    source.mkdir()
+    aliased = tmp_path / "sOURCE-hOME"
+    if not aliased.exists():
+        pytest.skip("filesystem is case-sensitive")
+
+    dest_inside = aliased / "rescued-output"
+    result = run_cli(
+        "init",
+        "--job-dir",
+        str(tmp_path / "job"),
+        "--source",
+        str(source),
+        "--dest",
+        str(dest_inside),
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "must not be inside source" in result.stderr
+    assert not dest_inside.exists()
+
+
 def test_existing_manifest_revalidates_source_write_guards(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     write_file(source / "Desktop" / "invoice.txt", b"desktop")
