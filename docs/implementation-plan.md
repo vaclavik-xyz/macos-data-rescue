@@ -12,7 +12,7 @@ macos-data-rescue copy --job-dir <dir> [--phase visible-home|hidden-home|app-dat
 macos-data-rescue resume --job-dir <dir> [same options as copy]
 macos-data-rescue status --job-dir <dir>
 macos-data-rescue report --job-dir <dir> [--format markdown|json]
-macos-data-rescue customer-report --job-dir <dir> [--format markdown|pdf] [--output <path>]
+macos-data-rescue customer-report --job-dir <dir> [--format markdown|pdf] [--language en|cs] [--output <path>]
 ```
 
 ## Data model
@@ -54,7 +54,7 @@ Default excludes: `.Trash`, `Library/Caches`, `Library/Logs`, common browser/app
 - resume skips copied files
 - timeout/failure marks one file failed/timed_out and continues
 - report summarizes copied/failed/skipped bytes and paths
-- customer-report writes a short customer-facing Markdown or PDF handoff report to the visible recovery root by default
+- customer-report writes an English or Czech customer-facing Markdown/PDF handoff report to the visible recovery root by default
 
 ## Done
 - Private GitHub repo exists.

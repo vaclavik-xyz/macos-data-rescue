@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from .manifest import all_files, load_config, migrate_manifest, status_summary
 
 
 STATUSES = ("pending", "copying", "copied", "failed", "timed_out", "skipped")
+CUSTOMER_REPORT_LANGUAGES = ("en", "cs")
 WARNINGS = (
     {
         "code": "icloud_dataless_placeholders",
@@ -45,6 +47,241 @@ WARNINGS = (
 )
 
 
+@dataclass(frozen=True)
+class CustomerReportText:
+    title: str
+    subtitle: str
+    generated: str
+    summary: str
+    recovery_source: str
+    recovery_destination: str
+    complete_sentence: str
+    unresolved_sentence: str
+    result: str
+    count: str
+    copied_files: str
+    copying_files: str
+    failed_files: str
+    timed_out_files: str
+    pending_files: str
+    skipped_entries: str
+    copied_data_recorded: str
+    what_recovered: str
+    what_recovered_body: str
+    destination_intro: str
+    breakdown: str
+    no_copied_content: str
+    folder: str
+    files: str
+    size: str
+    library_breakdown: str
+    library_area: str
+    items_not_copied: str
+    unresolved_items: str
+    no_failed_items: str
+    skipped_note: str
+    important_notes: str
+    copied_note: str
+    metadata_note: str
+    icloud_note: str
+    practical_note: str
+    detailed_reports: str
+    detailed_reports_intro: str
+    status_complete_title: str
+    status_unresolved_title: str
+    status_complete_body: str
+    status_unresolved_body: str
+    copied_data_metric: str
+    unresolved_metric: str
+    locations: str
+    recovered_data: str
+    result_summary: str
+    page: str
+
+
+CUSTOMER_REPORT_TEXT = {
+    "en": CustomerReportText(
+        title="Data Recovery Report",
+        subtitle="Customer handoff summary",
+        generated="Generated",
+        summary="Summary",
+        recovery_source="Recovery source",
+        recovery_destination="Recovery destination",
+        complete_sentence="The recovery completed with no failed or timed-out files recorded by the rescue tool.",
+        unresolved_sentence="The recovery completed with unresolved files recorded by the rescue tool.",
+        result="Result",
+        count="Count",
+        copied_files="Copied files",
+        copying_files="Copying files",
+        failed_files="Failed files",
+        timed_out_files="Timed-out files",
+        pending_files="Pending files",
+        skipped_entries="Skipped entries",
+        copied_data_recorded="Copied data recorded in the manifest",
+        what_recovered="What Was Recovered",
+        what_recovered_body=(
+            "The recovered folder contains the customer's selected home-folder data, "
+            "including visible home folders, hidden home-folder items, and any selected "
+            "application data phases that were copied for this job."
+        ),
+        destination_intro="The destination folder is:",
+        breakdown="Recovered Data Breakdown",
+        no_copied_content="No copied file content is recorded in the manifest yet.",
+        folder="Folder",
+        files="Files",
+        size="Size",
+        library_breakdown="Library Data Recovered",
+        library_area="Library area",
+        items_not_copied="Items Not Copied",
+        unresolved_items=(
+            "Some files were not fully copied yet or were recorded as failed/timed out. "
+            "See the detailed technician reports for exact paths and errors."
+        ),
+        no_failed_items="No files are recorded as failed or timed out.",
+        skipped_note=(
+            "Skipped entries are usually symbolic links. The tool deliberately skips "
+            "symbolic links so it does not follow links outside the selected source tree."
+        ),
+        important_notes="Important Notes",
+        copied_note=(
+            "A copied status means the rescue tool copied the file content and verified "
+            "that the copied byte count matched the expected file size recorded from the source."
+        ),
+        metadata_note=(
+            "macOS metadata such as extended attributes and resource forks is preserved "
+            "on a best-effort basis. Some system attributes, including quarantine and MAC "
+            "labels, are intentionally not restored."
+        ),
+        icloud_note=(
+            "If any files were iCloud placeholders on the source Mac, the data may not "
+            "have been physically present on disk. Such files may require export from a "
+            "live signed-in Mac or iCloud account."
+        ),
+        practical_note="This is a practical file-level recovery copy, not a forensic disk image.",
+        detailed_reports="Detailed Reports",
+        detailed_reports_intro="Detailed technician reports can be generated with:",
+        status_complete_title="Recovery complete",
+        status_unresolved_title="Recovery has unresolved files",
+        status_complete_body="No failed, timed-out, pending, or interrupted files are recorded.",
+        status_unresolved_body="Some files need technician review. See the detailed report for exact paths.",
+        copied_data_metric="Copied data",
+        unresolved_metric="Unresolved",
+        locations="Recovery locations",
+        recovered_data="Recovered data",
+        result_summary="Result summary",
+        page="Page",
+    ),
+    "cs": CustomerReportText(
+        title="Zpráva o záchraně dat",
+        subtitle="Souhrn pro zákazníka",
+        generated="Vygenerováno",
+        summary="Souhrn",
+        recovery_source="Zdroj obnovy",
+        recovery_destination="Cíl obnovy",
+        complete_sentence="Záchrana byla dokončena; nástroj neeviduje žádné neúspěšné soubory ani soubory po timeoutu.",
+        unresolved_sentence="Záchrana obsahuje nedořešené soubory evidované nástrojem.",
+        result="Výsledek",
+        count="Počet",
+        copied_files="Zkopírované soubory",
+        copying_files="Rozpracované soubory",
+        failed_files="Neúspěšné soubory",
+        timed_out_files="Soubory po timeoutu",
+        pending_files="Čekající soubory",
+        skipped_entries="Přeskočené položky",
+        copied_data_recorded="Zkopírovaná data evidovaná v manifestu",
+        what_recovered="Co bylo zachráněno",
+        what_recovered_body=(
+            "Cílová složka obsahuje vybraná data z domovské složky zákazníka, "
+            "včetně viditelných složek, skrytých položek v domovské složce "
+            "a vybraných aplikačních dat zkopírovaných pro tuto zakázku."
+        ),
+        destination_intro="Cílová složka je:",
+        breakdown="Přehled zachráněných dat",
+        no_copied_content="Manifest zatím neeviduje žádný zkopírovaný obsah souborů.",
+        folder="Složka",
+        files="Soubory",
+        size="Velikost",
+        library_breakdown="Zachráněná data z Library",
+        library_area="Část Library",
+        items_not_copied="Co nebylo zkopírováno",
+        unresolved_items=(
+            "Některé soubory zatím nebyly plně zkopírované nebo jsou evidované "
+            "jako neúspěšné / po timeoutu. Přesné cesty a chyby jsou v detailních "
+            "technických reportech."
+        ),
+        no_failed_items="Nástroj neeviduje žádné neúspěšné soubory ani soubory po timeoutu.",
+        skipped_note=(
+            "Přeskočené položky jsou obvykle symbolické odkazy. Nástroj je záměrně "
+            "nepřenáší, aby nenásledoval odkazy mimo vybraný zdrojový strom."
+        ),
+        important_notes="Důležité poznámky",
+        copied_note=(
+            "Stav zkopírováno znamená, že nástroj zkopíroval obsah souboru a ověřil, "
+            "že počet zkopírovaných bajtů odpovídá očekávané velikosti ze zdroje."
+        ),
+        metadata_note=(
+            "macOS metadata, jako jsou rozšířené atributy a resource forks, se zachovávají "
+            "best-effort. Některé systémové atributy včetně quarantine a MAC labels se "
+            "záměrně neobnovují."
+        ),
+        icloud_note=(
+            "Pokud byly některé soubory na zdrojovém Macu jen iCloud placeholdery, data "
+            "nemusela být fyzicky na disku. Takové soubory mohou vyžadovat export z "
+            "přihlášeného Macu nebo iCloud účtu."
+        ),
+        practical_note="Toto je praktická souborová záchrana dat, ne forenzní obraz disku.",
+        detailed_reports="Detailní reporty",
+        detailed_reports_intro="Detailní technické reporty lze vygenerovat příkazy:",
+        status_complete_title="Záchrana dokončena",
+        status_unresolved_title="Záchrana má nedořešené soubory",
+        status_complete_body="Nejsou evidované žádné neúspěšné, timeoutované, čekající ani přerušené soubory.",
+        status_unresolved_body="Některé soubory vyžadují kontrolu technikem. Přesné cesty jsou v detailním reportu.",
+        copied_data_metric="Zkopírovaná data",
+        unresolved_metric="Nedořešené",
+        locations="Umístění záchrany",
+        recovered_data="Zachráněná data",
+        result_summary="Souhrn výsledku",
+        page="Strana",
+    ),
+}
+PDF_CUSTOM_GLYPHS = (
+    ("Á", "Aacute"),
+    ("Č", "Ccaron"),
+    ("Ď", "Dcaron"),
+    ("É", "Eacute"),
+    ("Ě", "Ecaron"),
+    ("Í", "Iacute"),
+    ("Ň", "Ncaron"),
+    ("Ó", "Oacute"),
+    ("Ř", "Rcaron"),
+    ("Š", "Scaron"),
+    ("Ť", "Tcaron"),
+    ("Ú", "Uacute"),
+    ("Ů", "Uring"),
+    ("Ý", "Yacute"),
+    ("Ž", "Zcaron"),
+    ("á", "aacute"),
+    ("č", "ccaron"),
+    ("ď", "dcaron"),
+    ("é", "eacute"),
+    ("ě", "ecaron"),
+    ("í", "iacute"),
+    ("ň", "ncaron"),
+    ("ó", "oacute"),
+    ("ř", "rcaron"),
+    ("š", "scaron"),
+    ("ť", "tcaron"),
+    ("ú", "uacute"),
+    ("ů", "uring"),
+    ("ý", "yacute"),
+    ("ž", "zcaron"),
+)
+PDF_CUSTOM_CHAR_CODES = {
+    char: 128 + index
+    for index, (char, _glyph_name) in enumerate(PDF_CUSTOM_GLYPHS)
+}
+
+
 def status_text(job_dir: Path) -> str:
     load_config(job_dir)
     migrate_manifest(job_dir)
@@ -58,24 +295,38 @@ def report(job_dir: Path, report_format: str) -> str:
     return markdown_report(job_dir)
 
 
-def write_customer_report(job_dir: Path, report_format: str, output_path: Path | None = None) -> Path:
+def write_customer_report(
+    job_dir: Path,
+    report_format: str,
+    output_path: Path | None = None,
+    language: str = "en",
+) -> Path:
     config = load_config(job_dir)
     migrate_manifest(job_dir)
+    report_text = customer_report_text(language)
     if output_path is None:
         suffix = "pdf" if report_format == "pdf" else "md"
-        output_path = config.dest.parent / f"recovery-report.{suffix}"
+        stem = "recovery-report" if language == "en" else f"recovery-report-{language}"
+        output_path = config.dest.parent / f"{stem}.{suffix}"
     output_path = output_path.resolve(strict=False)
     if output_path == config.source or config.source in output_path.parents:
         raise RescueError(f"customer report output must not be inside source: {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    markdown = customer_markdown_report(job_dir)
+    markdown = customer_markdown_report(job_dir, report_text)
     if report_format == "markdown":
         atomic_write_bytes(output_path, markdown.encode())
     elif report_format == "pdf":
-        atomic_write_bytes(output_path, customer_pdf_bytes(job_dir))
+        atomic_write_bytes(output_path, customer_pdf_bytes(job_dir, report_text))
     else:
         raise RescueError(f"unsupported customer report format: {report_format}")
     return output_path
+
+
+def customer_report_text(language: str) -> CustomerReportText:
+    try:
+        return CUSTOMER_REPORT_TEXT[language]
+    except KeyError as exc:
+        raise RescueError(f"unsupported customer report language: {language}") from exc
 
 
 def report_payload(job_dir: Path) -> dict[str, object]:
@@ -137,7 +388,8 @@ def markdown_report(job_dir: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
-def customer_markdown_report(job_dir: Path) -> str:
+def customer_markdown_report(job_dir: Path, text: CustomerReportText | None = None) -> str:
+    text = text or customer_report_text("en")
     config = load_config(job_dir)
     migrate_manifest(job_dir)
     summary = normalized_summary(job_dir)
@@ -151,68 +403,66 @@ def customer_markdown_report(job_dir: Path) -> str:
     copying = summary["copying"]["count"]
     unresolved = failed + timed_out + pending + copying
     lines = [
-        "# Data Recovery Report",
+        f"# {text.title}",
         "",
-        f"Generated: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}",
+        text.subtitle,
         "",
-        "## Summary",
+        f"{text.generated}: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}",
         "",
-        f"Recovery source: `{config.source}`  ",
-        f"Recovery destination: `{config.dest}`",
+        f"## {text.summary}",
+        "",
+        f"{text.recovery_source}: `{config.source}`  ",
+        f"{text.recovery_destination}: `{config.dest}`",
         "",
     ]
     if unresolved:
-        lines.append("The recovery completed with unresolved files recorded by the rescue tool.")
+        lines.append(text.unresolved_sentence)
     else:
-        lines.append("The recovery completed with no failed or timed-out files recorded by the rescue tool.")
+        lines.append(text.complete_sentence)
     lines.extend(
         [
             "",
-            "| Result | Count |",
+            f"| {text.result} | {text.count} |",
             "| --- | ---: |",
-            f"| Copied files | {summary['copied']['count']} |",
-            f"| Copying files | {copying} |",
-            f"| Failed files | {failed} |",
-            f"| Timed-out files | {timed_out} |",
-            f"| Pending files | {pending} |",
-            f"| Skipped entries | {summary['skipped']['count']} |",
+            f"| {text.copied_files} | {summary['copied']['count']} |",
+            f"| {text.copying_files} | {copying} |",
+            f"| {text.failed_files} | {failed} |",
+            f"| {text.timed_out_files} | {timed_out} |",
+            f"| {text.pending_files} | {pending} |",
+            f"| {text.skipped_entries} | {summary['skipped']['count']} |",
             "",
-            f"Copied data recorded in the manifest: {format_gib(copied_bytes)}  ",
+            f"{text.copied_data_recorded}: {format_gib(copied_bytes)}  ",
             "",
-            "## What Was Recovered",
+            f"## {text.what_recovered}",
             "",
-            (
-                "The recovered folder contains the customer's selected home-folder data, "
-                "including visible home folders, hidden home-folder items, and any selected "
-                "application data phases that were copied for this job."
-            ),
+            text.what_recovered_body,
             "",
-            "The destination folder is:",
+            text.destination_intro,
             "",
             f"`{config.dest}`",
             "",
-            "## Recovered Data Breakdown",
+            f"## {text.breakdown}",
             "",
         ]
     )
     if breakdown:
         lines.extend(
             [
-                "| Folder | Files | Size |",
+                f"| {text.folder} | {text.files} | {text.size} |",
                 "| --- | ---: | ---: |",
             ]
         )
         for label, count, size in breakdown:
             lines.append(f"| {markdown_table_cell(label)} | {count} | {format_gib(size)} |")
     else:
-        lines.append("No copied file content is recorded in the manifest yet.")
+        lines.append(text.no_copied_content)
     if library_breakdown:
         lines.extend(
             [
                 "",
-                "## Library Data Recovered",
+                f"## {text.library_breakdown}",
                 "",
-                "| Library area | Files | Size |",
+                f"| {text.library_area} | {text.files} | {text.size} |",
                 "| --- | ---: | ---: |",
             ]
         )
@@ -221,46 +471,29 @@ def customer_markdown_report(job_dir: Path) -> str:
     lines.extend(
         [
             "",
-            "## Items Not Copied",
+            f"## {text.items_not_copied}",
             "",
         ]
     )
     if unresolved:
-        lines.append(
-            "Some files were not fully copied yet or were recorded as failed/timed out. "
-            "See the detailed technician reports for exact paths and errors."
-        )
+        lines.append(text.unresolved_items)
     else:
-        lines.append("No files are recorded as failed or timed out.")
+        lines.append(text.no_failed_items)
     lines.extend(
         [
             "",
-            (
-                "Skipped entries are usually symbolic links. The tool deliberately skips "
-                "symbolic links so it does not follow links outside the selected source tree."
-            ),
+            text.skipped_note,
             "",
-            "## Important Notes",
+            f"## {text.important_notes}",
             "",
-            (
-                "- A copied status means the rescue tool copied the file content and verified "
-                "that the copied byte count matched the expected file size recorded from the source."
-            ),
-            (
-                "- macOS metadata such as extended attributes and resource forks is preserved "
-                "on a best-effort basis. Some system attributes, including quarantine and MAC "
-                "labels, are intentionally not restored."
-            ),
-            (
-                "- If any files were iCloud placeholders on the source Mac, the data may not "
-                "have been physically present on disk. Such files may require export from a "
-                "live signed-in Mac or iCloud account."
-            ),
-            "- This is a practical file-level recovery copy, not a forensic disk image.",
+            f"- {text.copied_note}",
+            f"- {text.metadata_note}",
+            f"- {text.icloud_note}",
+            f"- {text.practical_note}",
             "",
-            "## Detailed Reports",
+            f"## {text.detailed_reports}",
             "",
-            "Detailed technician reports can be generated with:",
+            text.detailed_reports_intro,
             "",
             "`macos-data-rescue report --job-dir JOB --format markdown`",
             "`macos-data-rescue report --job-dir JOB --format json`",
@@ -269,7 +502,8 @@ def customer_markdown_report(job_dir: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
-def customer_pdf_bytes(job_dir: Path) -> bytes:
+def customer_pdf_bytes(job_dir: Path, text: CustomerReportText | None = None) -> bytes:
+    text = text or customer_report_text("en")
     config = load_config(job_dir)
     migrate_manifest(job_dir)
     summary = normalized_summary(job_dir)
@@ -280,66 +514,56 @@ def customer_pdf_bytes(job_dir: Path) -> bytes:
     copying = summary["copying"]["count"]
     unresolved = failed + timed_out + pending + copying
     canvas = PdfCanvas()
-    canvas.header("Data Recovery Report", "Customer handoff summary")
+    canvas.header(text.title, text.subtitle)
     canvas.status_card(
-        "Recovery complete" if not unresolved else "Recovery has unresolved files",
-        (
-            "No failed, timed-out, pending, or interrupted files are recorded."
-            if not unresolved
-            else "Some files need technician review. See the detailed report for exact paths."
-        ),
+        text.status_complete_title if not unresolved else text.status_unresolved_title,
+        text.status_complete_body if not unresolved else text.status_unresolved_body,
         ok=not unresolved,
     )
     canvas.metric_cards(
         (
-            ("Copied files", str(summary["copied"]["count"])),
-            ("Copied data", format_gib(summary["copied"]["bytes"])),
-            ("Unresolved", str(unresolved)),
+            (text.copied_files, str(summary["copied"]["count"])),
+            (text.copied_data_metric, format_gib(summary["copied"]["bytes"])),
+            (text.unresolved_metric, str(unresolved)),
         )
     )
-    canvas.section("Recovery locations")
-    canvas.key_value("Source", str(config.source))
-    canvas.key_value("Recovered data", str(config.dest))
+    canvas.section(text.locations)
+    canvas.key_value(text.recovery_source, str(config.source))
+    canvas.key_value(text.recovered_data, str(config.dest))
     canvas.spacer(8)
-    canvas.section("Result summary")
+    canvas.section(text.result_summary)
     canvas.table(
-        ("Result", "Count"),
+        (text.result, text.count),
         (
-            ("Copied files", str(summary["copied"]["count"])),
-            ("Copying files", str(copying)),
-            ("Failed files", str(failed)),
-            ("Timed-out files", str(timed_out)),
-            ("Pending files", str(pending)),
-            ("Skipped entries", str(summary["skipped"]["count"])),
+            (text.copied_files, str(summary["copied"]["count"])),
+            (text.copying_files, str(copying)),
+            (text.failed_files, str(failed)),
+            (text.timed_out_files, str(timed_out)),
+            (text.pending_files, str(pending)),
+            (text.skipped_entries, str(summary["skipped"]["count"])),
         ),
         (330, 120),
     )
-    canvas.section("Recovered Data Breakdown")
+    canvas.section(text.breakdown)
     breakdown_rows = tuple(
         (label, str(count), format_gib(size)) for label, count, size in recovered_top_level_breakdown(rows)
     )
     if breakdown_rows:
-        canvas.table(("Folder", "Files", "Size"), breakdown_rows, (240, 80, 130))
+        canvas.table((text.folder, text.files, text.size), breakdown_rows, (240, 80, 130))
     else:
-        canvas.paragraph("No copied file content is recorded in the manifest yet.")
+        canvas.paragraph(text.no_copied_content)
     library_rows = tuple(
         (label, str(count), format_gib(size)) for label, count, size in recovered_library_breakdown(rows)
     )
     if library_rows:
-        canvas.section("Library Data Recovered")
-        canvas.table(("Library area", "Files", "Size"), library_rows, (240, 80, 130))
-    canvas.section("Important notes")
-    canvas.bullet(
-        "Copied means file content was copied and the copied byte count matched the expected source size."
-    )
-    canvas.bullet(
-        "macOS extended attributes and resource forks are preserved best-effort; quarantine and MAC labels are skipped."
-    )
-    canvas.bullet(
-        "iCloud dataless placeholders may not have had physical data on disk and can require export from a signed-in Mac or iCloud."
-    )
-    canvas.bullet("This is a practical file-level recovery copy, not a forensic disk image.")
-    canvas.footer()
+        canvas.section(text.library_breakdown)
+        canvas.table((text.library_area, text.files, text.size), library_rows, (240, 80, 130))
+    canvas.section(text.important_notes)
+    canvas.bullet(text.copied_note)
+    canvas.bullet(text.metadata_note)
+    canvas.bullet(text.icloud_note)
+    canvas.bullet(text.practical_note)
+    canvas.footer(text.page)
     return canvas.render()
 
 
@@ -527,9 +751,11 @@ class PdfCanvas:
         self.pages.append([])
         self.y = 792
 
-    def footer(self) -> None:
+    def footer(self, page_label: str) -> None:
         for index, commands in enumerate(self.pages, start=1):
-            commands.append(pdf_text_command(self.margin, 28, f"Page {index}", "F1", 8, (0.45, 0.52, 0.60)))
+            commands.append(
+                pdf_text_command(self.margin, 28, f"{page_label} {index}", "F1", 8, (0.45, 0.52, 0.60))
+            )
 
     def rect(self, x: float, y: float, width: float, height: float, color: tuple[float, float, float]) -> None:
         self.commands.append(f"{pdf_rgb(color)} rg {pdf_num(x)} {pdf_num(y)} {pdf_num(width)} {pdf_num(height)} re f")
@@ -587,11 +813,12 @@ def pdf_text_command(
 def pdf_document_bytes(streams: list[bytes]) -> bytes:
     objects: list[bytes] = []
     objects.append(b"<< /Type /Catalog /Pages 2 0 R >>")
-    page_object_ids = [5 + index * 2 for index in range(len(streams))]
+    page_object_ids = [6 + index * 2 for index in range(len(streams))]
     kids = b" ".join(f"{object_id} 0 R".encode("ascii") for object_id in page_object_ids)
     objects.append(f"<< /Type /Pages /Kids [{kids.decode('ascii')}] /Count {len(streams)} >>".encode("ascii"))
-    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
-    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>")
+    objects.append(pdf_custom_encoding_object())
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding 3 0 R >>")
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding 3 0 R >>")
 
     for index, stream in enumerate(streams):
         page_id = page_object_ids[index]
@@ -599,7 +826,7 @@ def pdf_document_bytes(streams: list[bytes]) -> bytes:
         objects.append(
             (
                 f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PdfCanvas.page_width} {PdfCanvas.page_height}] "
-                f"/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {content_id} 0 R >>"
+                f"/Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents {content_id} 0 R >>"
             ).encode("ascii")
         )
         objects.append(b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream")
@@ -623,6 +850,14 @@ def pdf_document_bytes(streams: list[bytes]) -> bytes:
         ).encode("ascii")
     )
     return bytes(pdf)
+
+
+def pdf_custom_encoding_object() -> bytes:
+    differences = " ".join(glyph_name for _char, glyph_name in PDF_CUSTOM_GLYPHS)
+    return (
+        "<< /Type /Encoding /BaseEncoding /WinAnsiEncoding "
+        f"/Differences [128 /{differences.replace(' ', ' /')}] >>"
+    ).encode("ascii")
 
 
 def fit_text(text: str, width: int, size: int) -> str:
@@ -802,6 +1037,10 @@ def pdf_safe_text(text: str) -> str:
         codepoint = ord(char)
         if codepoint < 32 and char != "\t":
             safe_chars.append(" ")
+            continue
+        custom_code = PDF_CUSTOM_CHAR_CODES.get(char)
+        if custom_code is not None:
+            safe_chars.append(chr(custom_code))
             continue
         try:
             char.encode("latin-1")

@@ -1370,6 +1370,56 @@ def test_customer_report_writes_markdown_and_pdf_to_recovery_root(tmp_path: Path
     assert pdf_path.read_bytes().startswith(b"%PDF-")
 
 
+def test_customer_report_writes_czech_markdown_and_pdf_without_overwriting_english(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "faktura.txt", b"desktop")
+    recovery_root = tmp_path / "recovery"
+    job_dir = recovery_root / ".rescue"
+    dest_dir = recovery_root / "user-data"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "important")
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+
+    run_cli("customer-report", "--job-dir", str(job_dir), "--format", "markdown")
+    run_cli("customer-report", "--job-dir", str(job_dir), "--format", "pdf")
+    cs_markdown_result = run_cli(
+        "customer-report",
+        "--job-dir",
+        str(job_dir),
+        "--format",
+        "markdown",
+        "--language",
+        "cs",
+    )
+    cs_pdf_result = run_cli(
+        "customer-report",
+        "--job-dir",
+        str(job_dir),
+        "--format",
+        "pdf",
+        "--language",
+        "cs",
+    )
+
+    english_markdown = recovery_root / "recovery-report.md"
+    english_pdf = recovery_root / "recovery-report.pdf"
+    czech_markdown = recovery_root / "recovery-report-cs.md"
+    czech_pdf = recovery_root / "recovery-report-cs.pdf"
+    assert str(czech_markdown) in cs_markdown_result.stdout
+    assert str(czech_pdf) in cs_pdf_result.stdout
+    assert english_markdown.exists()
+    assert english_pdf.exists()
+    czech_text = czech_markdown.read_text()
+    czech_pdf_bytes = czech_pdf.read_bytes()
+    assert "# Zpráva o záchraně dat" in czech_text
+    assert "Souhrn pro zákazníka" in czech_text
+    assert "| Zkopírované soubory | 1 |" in czech_text
+    assert "Přehled zachráněných dat" in czech_text
+    assert czech_pdf_bytes.startswith(b"%PDF-")
+    assert b"\\u" not in czech_pdf_bytes
+    assert b"/ccaron" in czech_pdf_bytes
+
+
 def test_customer_report_rejects_output_inside_source(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     write_file(source / "Desktop" / "invoice.txt", b"desktop")
@@ -1457,7 +1507,7 @@ def test_customer_report_temp_write_does_not_follow_stale_symlink_into_source(tm
 
 
 def test_customer_pdf_report_escapes_unsupported_unicode_without_corrupting_markdown(tmp_path: Path) -> None:
-    source = tmp_path / "zdroj-č"
+    source = tmp_path / "zdroj-🙂"
     write_file(source / "Desktop" / "invoice.txt", b"desktop")
     job_dir, _, _ = init_and_scan(tmp_path, source)
 
@@ -1466,8 +1516,8 @@ def test_customer_pdf_report_escapes_unsupported_unicode_without_corrupting_mark
 
     pdf_bytes = (tmp_path / "recovery-report.pdf").read_bytes()
     assert pdf_bytes.startswith(b"%PDF-")
-    assert b"zdroj-\\\\u010d" in pdf_bytes
-    assert "zdroj-č" in (tmp_path / "recovery-report.md").read_text()
+    assert b"zdroj-\\\\U0001f642" in pdf_bytes
+    assert "zdroj-🙂" in (tmp_path / "recovery-report.md").read_text()
 
 
 def test_customer_report_pdf_has_layout_and_recovered_data_breakdown(tmp_path: Path) -> None:

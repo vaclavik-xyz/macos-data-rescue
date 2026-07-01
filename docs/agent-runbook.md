@@ -140,11 +140,13 @@ Generate reports:
 ```bash
 uv run macos-data-rescue customer-report --job-dir "$JOB" --format pdf
 uv run macos-data-rescue customer-report --job-dir "$JOB" --format markdown
+uv run macos-data-rescue customer-report --job-dir "$JOB" --format pdf --language cs
+uv run macos-data-rescue customer-report --job-dir "$JOB" --format markdown --language cs
 uv run macos-data-rescue report --job-dir "$JOB" --format markdown > "$JOB/report.md"
 uv run macos-data-rescue report --job-dir "$JOB" --format json > "$JOB/report.json"
 ```
 
-`customer-report` writes `recovery-report.pdf` or `recovery-report.md` into the visible recovery root next to `user-data/` by default. The customer PDF includes the outcome summary, top-level recovered folder breakdown, and Library-area breakdown when applicable. Keep the full Markdown/JSON reports under `JOB` for technician review.
+`customer-report` writes `recovery-report.pdf` or `recovery-report.md` into the visible recovery root next to `user-data/` by default. English is the default. Use `--language cs` for Czech output; the default filenames are `recovery-report-cs.pdf` and `recovery-report-cs.md` so the English report is not overwritten. The customer PDF includes the outcome summary, top-level recovered folder breakdown, and Library-area breakdown when applicable. Keep the full Markdown/JSON reports under `JOB` for technician review.
 
 ## Exit Codes And File Statuses
 
