@@ -138,9 +138,13 @@ uv run macos-data-rescue status --job-dir "$JOB"
 Generate reports:
 
 ```bash
+uv run macos-data-rescue customer-report --job-dir "$JOB" --format pdf
+uv run macos-data-rescue customer-report --job-dir "$JOB" --format markdown
 uv run macos-data-rescue report --job-dir "$JOB" --format markdown > "$JOB/report.md"
 uv run macos-data-rescue report --job-dir "$JOB" --format json > "$JOB/report.json"
 ```
+
+`customer-report` writes `recovery-report.pdf` or `recovery-report.md` into the visible recovery root next to `user-data/` by default. Keep the full Markdown/JSON reports under `JOB` for technician review.
 
 ## Exit Codes And File Statuses
 
@@ -195,7 +199,8 @@ Escalation options include imaging first, `ddrescue`, hardware-level recovery, o
 
 ## Final Handoff Checklist
 
-- `report.md` and `report.json` exist under `JOB`.
+- `recovery-report.pdf` exists in the visible recovery root next to `user-data/`.
+- `report.md` and `report.json` exist under `JOB` for technician review.
 - `status` output has been captured in service notes.
 - Sample rescued files from each successful phase open from `DST`.
 - The customer is told which files were `failed`, `timed_out`, `skipped`, or had warnings.

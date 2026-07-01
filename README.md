@@ -18,6 +18,7 @@ The goal is simple: **one bad file must not stop the whole rescue**. The tool sc
 - `copy` / `resume` clean stale internal `*.rescue-tmp` files in relevant destination directories before copying.
 - `status` prints manifest counts.
 - `report` prints Markdown or JSON suitable for service notes, including per-file suspected iCloud placeholder warnings.
+- `customer-report` writes a short customer-facing Markdown or PDF handoff report into the visible recovery root.
 
 ## Install / run locally
 
@@ -80,9 +81,13 @@ Check progress and produce a report:
 
 ```bash
 uv run macos-data-rescue status --job-dir "$JOB"
+uv run macos-data-rescue customer-report --job-dir "$JOB" --format pdf
+uv run macos-data-rescue customer-report --job-dir "$JOB" --format markdown
 uv run macos-data-rescue report --job-dir "$JOB" --format markdown > "$JOB/report.md"
 uv run macos-data-rescue report --job-dir "$JOB" --format json > "$JOB/report.json"
 ```
+
+`customer-report` writes a short customer-facing handoff report to the recovery root by default, next to `user-data/` as `recovery-report.pdf` or `recovery-report.md`. The detailed `report` command stays on stdout and is intended for technician notes or `.rescue` artifacts.
 
 ## Exit codes
 

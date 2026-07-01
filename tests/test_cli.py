@@ -10,6 +10,8 @@ import tomllib
 from pathlib import Path
 from shutil import which
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -1339,6 +1341,130 @@ def test_report_outputs_markdown_and_json_summary(tmp_path: Path) -> None:
         "Desktop/denied.txt",
         "Desktop/invoice.txt",
     }
+
+
+def test_customer_report_writes_markdown_and_pdf_to_recovery_root(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    recovery_root = tmp_path / "recovery"
+    job_dir = recovery_root / ".rescue"
+    dest_dir = recovery_root / "user-data"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "important")
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+
+    markdown_result = run_cli("customer-report", "--job-dir", str(job_dir), "--format", "markdown")
+    pdf_result = run_cli("customer-report", "--job-dir", str(job_dir), "--format", "pdf")
+
+    markdown_path = recovery_root / "recovery-report.md"
+    pdf_path = recovery_root / "recovery-report.pdf"
+    assert str(markdown_path) in markdown_result.stdout
+    assert str(pdf_path) in pdf_result.stdout
+    assert markdown_path.exists()
+    assert pdf_path.exists()
+    markdown = markdown_path.read_text()
+    assert "# Data Recovery Report" in markdown
+    assert f"Recovery destination: `{dest_dir.resolve(strict=False)}`" in markdown
+    assert "| Copied files | 1 |" in markdown
+    assert "| Failed files | 0 |" in markdown
+    assert pdf_path.read_bytes().startswith(b"%PDF-")
+
+
+def test_customer_report_rejects_output_inside_source(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+    source_output = source / "recovery-report.pdf"
+
+    result = run_cli(
+        "customer-report",
+        "--job-dir",
+        str(job_dir),
+        "--format",
+        "pdf",
+        "--output",
+        str(source_output),
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "must not be inside source" in result.stderr
+    assert not source_output.exists()
+
+
+def test_customer_report_marks_pending_and_copying_as_unresolved(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+
+    conn = sqlite3.connect(job_dir / "manifest.sqlite")
+    try:
+        conn.execute("update files set status = 'copying' where relative_path = 'Desktop/invoice.txt'")
+        conn.commit()
+    finally:
+        conn.close()
+
+    run_cli("customer-report", "--job-dir", str(job_dir), "--format", "markdown")
+
+    report_text = (tmp_path / "recovery-report.md").read_text()
+    assert "completed with unresolved files" in report_text
+    assert "| Copying files | 1 |" in report_text
+    assert "| Pending files | 0 |" in report_text
+    assert "not fully copied yet" in report_text
+
+
+def test_customer_report_preserves_existing_file_when_atomic_replace_fails(tmp_path: Path, monkeypatch) -> None:
+    from macos_data_rescue import reporting
+
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+    output_path = tmp_path / "recovery-report.md"
+    output_path.write_text("existing report")
+
+    def fail_replace(src: str | bytes | os.PathLike[str], dst: str | bytes | os.PathLike[str]) -> None:
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(reporting.os, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="simulated replace failure"):
+        reporting.write_customer_report(job_dir, "markdown", output_path)
+
+    assert output_path.read_text() == "existing report"
+    assert not list(tmp_path.glob("*.rescue-report-tmp"))
+
+
+def test_customer_report_temp_write_does_not_follow_stale_symlink_into_source(tmp_path: Path) -> None:
+    from macos_data_rescue import reporting
+
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    victim = source / "Desktop" / "source-victim.txt"
+    write_file(victim, b"source must stay untouched")
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+    output_path = tmp_path / "recovery-report.md"
+    stale_predictable_temp = tmp_path / f".{output_path.name}.{os.getpid()}.rescue-report-tmp"
+    os.symlink(victim, stale_predictable_temp)
+
+    reporting.write_customer_report(job_dir, "markdown", output_path)
+
+    assert output_path.exists()
+    assert victim.read_bytes() == b"source must stay untouched"
+    assert stale_predictable_temp.is_symlink()
+
+
+def test_customer_pdf_report_escapes_unsupported_unicode_without_corrupting_markdown(tmp_path: Path) -> None:
+    source = tmp_path / "zdroj-č"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+
+    run_cli("customer-report", "--job-dir", str(job_dir), "--format", "pdf")
+    run_cli("customer-report", "--job-dir", str(job_dir), "--format", "markdown")
+
+    pdf_bytes = (tmp_path / "recovery-report.pdf").read_bytes()
+    assert pdf_bytes.startswith(b"%PDF-")
+    assert b"zdroj-\\\\u010d" in pdf_bytes
+    assert "zdroj-č" in (tmp_path / "recovery-report.md").read_text()
 
 
 def test_rescue_error_returns_one_but_argparse_usage_returns_two(tmp_path: Path) -> None:

@@ -8,7 +8,7 @@ from pathlib import Path
 from .copier import copy_job
 from .errors import RescueError
 from .manifest import init_manifest
-from .reporting import report, status_text
+from .reporting import report, status_text, write_customer_report
 from .scanner import scan_job
 
 
@@ -57,6 +57,14 @@ def build_parser() -> argparse.ArgumentParser:
     report_parser.add_argument("--job-dir", required=True, type=Path)
     report_parser.add_argument("--format", default="markdown", choices=("markdown", "json"))
 
+    customer_report_parser = subparsers.add_parser(
+        "customer-report",
+        help="Write a short customer-facing recovery report.",
+    )
+    customer_report_parser.add_argument("--job-dir", required=True, type=Path)
+    customer_report_parser.add_argument("--format", default="pdf", choices=("markdown", "pdf"))
+    customer_report_parser.add_argument("--output", type=Path)
+
     return parser
 
 
@@ -103,6 +111,9 @@ def main(argv: list[str] | None = None) -> int:
             print(status_text(args.job_dir))
         elif args.command == "report":
             sys.stdout.write(report(args.job_dir, args.format))
+        elif args.command == "customer-report":
+            output_path = write_customer_report(args.job_dir, args.format, args.output)
+            print(f"wrote report={output_path}")
         else:
             parser.error(f"unknown command: {args.command}")
     except RescueError as exc:

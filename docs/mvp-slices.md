@@ -16,7 +16,7 @@ This document tracks the MVP that was implemented and the next hardening slices.
 - Symlink safety: symlinks are recorded and marked `skipped`, never followed.
 - Resume semantics for failed/timed-out/copying rows and copied rows whose destination disappeared.
 - `--limit` counts files that actually need work, not already-matching copied rows.
-- `status` and `report --format markdown|json`.
+- `status`, technician `report --format markdown|json`, and customer-facing `customer-report --format markdown|pdf`.
 - Regression test suite covering scan/excludes, phase-scoped scan, scan batching/timeout/limit/cursor resume, application roots, copy completeness, resume, timeout/failure continuation, symlink safety, temp cleanup/collision, streamed manifest selection, source write guards, safe metadata copy, exit codes, and limit starvation.
 - Reports include general warnings plus per-file suspected iCloud dataless placeholder markers in Markdown and JSON, including macOS `SF_DATALESS` flag detection.
 - macOS extended attributes and resource forks are copied best-effort through libSystem; `com.apple.quarantine` and `com.apple.macl` are skipped, and xattr failures become visible report warnings instead of failing content rescue.
