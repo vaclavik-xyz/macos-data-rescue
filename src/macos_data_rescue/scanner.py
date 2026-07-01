@@ -253,7 +253,17 @@ def iter_tree(source: Path, scan_root: Path, phase: str):
         files.sort()
         kept_dirs = []
         for dirname in dirs:
-            rel_parts = relative_parts(source, root_path / dirname)
+            path = root_path / dirname
+            rel_parts = relative_parts(source, path)
+            # os.walk classifies symlinks to directories as dirs; record them
+            # like file symlinks so the manifest shows they existed, but never
+            # descend into them.
+            if path.is_symlink():
+                if should_include_file(rel_parts, phase):
+                    entry = scanned_symlink(path, rel_parts, manifest_phase_for(rel_parts, phase))
+                    if entry is not None:
+                        yield entry
+                continue
             if should_descend(rel_parts, phase):
                 kept_dirs.append(dirname)
         dirs[:] = kept_dirs
@@ -283,6 +293,14 @@ def iter_application_tree(scan_root: Path, dest_prefix: str):
         root_path = Path(root)
         dirs.sort()
         files.sort()
+        for dirname in dirs:
+            path = root_path / dirname
+            if not path.is_symlink():
+                continue
+            rel = Path(dest_prefix) / path.relative_to(scan_root)
+            entry = scanned_symlink(path, rel.parts, "applications", source_path=str(path))
+            if entry is not None:
+                yield entry
         for filename in files:
             path = root_path / filename
             try:
@@ -301,6 +319,29 @@ def iter_application_tree(scan_root: Path, dest_prefix: str):
                 phase="applications",
                 warning=warning_for(path, rel_parts, info),
             )
+
+
+def scanned_symlink(
+    path: Path,
+    rel_parts: tuple[str, ...],
+    phase: str,
+    *,
+    source_path: str | None = None,
+) -> ScannedFile | None:
+    try:
+        info = path.stat(follow_symlinks=False)
+    except OSError:
+        return None
+    return ScannedFile(
+        relative_path="/".join(rel_parts),
+        source_path=source_path,
+        size=info.st_size,
+        mtime_ns=info.st_mtime_ns,
+        mode=stat.S_IMODE(info.st_mode),
+        kind=file_kind(info.st_mode),
+        phase=phase,
+        warning=None,
+    )
 
 
 def relative_parts(source: Path, path: Path) -> tuple[str, ...]:

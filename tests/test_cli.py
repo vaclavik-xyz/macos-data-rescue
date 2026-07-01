@@ -1282,6 +1282,46 @@ def test_destination_symlink_loop_marks_file_failed_and_continues(tmp_path: Path
     assert (dest_dir / "Desktop" / "z.txt").read_bytes() == b"after"
 
 
+def test_scan_records_directory_symlink_without_following_it(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    outside = tmp_path / "outside-dir"
+    write_file(outside / "secret.txt", b"host secret")
+    write_file(source / "Desktop" / "regular.txt", b"regular")
+    os.symlink(outside, source / "Desktop" / "linked-folder")
+
+    job_dir, _, dest_dir = init_and_scan(tmp_path, source)
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
+
+    rows = file_rows(job_dir)
+    assert rows["Desktop/linked-folder"]["kind"] == "symlink"
+    assert rows["Desktop/linked-folder"]["status"] == "skipped"
+    assert "Desktop/linked-folder/secret.txt" not in rows
+    assert not (dest_dir / "Desktop" / "linked-folder").exists()
+    assert (dest_dir / "Desktop" / "regular.txt").read_bytes() == b"regular"
+
+
+def test_scan_applications_records_bundle_directory_symlinks(tmp_path: Path) -> None:
+    volume = tmp_path / "Mounted Air"
+    source = volume / "Users" / "dan"
+    framework = volume / "Applications" / "Legacy.app" / "Contents" / "Frameworks" / "Foo.framework"
+    write_file(framework / "Versions" / "A" / "Foo", b"binary")
+    os.symlink("A", framework / "Versions" / "Current")
+    source.mkdir(parents=True)
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "applications", "--timeout", "2")
+
+    rows = file_rows(job_dir)
+    current = "Volume Applications/Legacy.app/Contents/Frameworks/Foo.framework/Versions/Current"
+    binary = "Volume Applications/Legacy.app/Contents/Frameworks/Foo.framework/Versions/A/Foo"
+    assert rows[current]["kind"] == "symlink"
+    assert rows[current]["status"] == "skipped"
+    assert rows[binary]["status"] == "copied"
+
+
 def test_copy_skips_symlink_without_copying_target_content(tmp_path: Path) -> None:
     source = tmp_path / "source-home"
     outside = tmp_path / "outside-secret.txt"
