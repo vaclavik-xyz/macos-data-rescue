@@ -272,9 +272,13 @@ def iter_tree(source: Path, scan_root: Path, phase: str):
             rel_parts = relative_parts(source, path)
             # os.walk classifies symlinks to directories as dirs; record them
             # like file symlinks so the manifest shows they existed, but never
-            # descend into them.
+            # descend into them. should_descend also matters: for app-data a
+            # symlink at an intermediate curated position (Library/MobileSync,
+            # Library/Containers, ...) fails the full-prefix file check but
+            # would have been descended as a real directory, and must not
+            # vanish without a manifest trace.
             if path.is_symlink():
-                if should_include_file(rel_parts, phase):
+                if should_include_file(rel_parts, phase) or should_descend(rel_parts, phase):
                     entry = scanned_symlink(path, rel_parts, manifest_phase_for(rel_parts, phase))
                     if entry is not None:
                         yield entry

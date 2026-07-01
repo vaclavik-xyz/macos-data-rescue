@@ -638,3 +638,23 @@ def test_sf_dataless_flag_marks_suspected_icloud_placeholder_without_path_marker
     warning = scanner.warning_for(tmp_path / "Desktop" / "contract.pages", ("Desktop", "contract.pages"), FakeStat())
 
     assert warning == scanner.ICLOUD_PLACEHOLDER_WARNING
+
+
+def test_scan_app_data_records_symlinked_intermediate_library_dir(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    outside = tmp_path / "external-backups"
+    write_file(outside / "Backup" / "DEVICE-UDID" / "Manifest.db", b"backup")
+    write_file(source / "Library" / "Mail" / "V10" / "mailbox", b"mail")
+    os.symlink(outside, source / "Library" / "MobileSync")
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "app-data")
+    run_cli("copy", "--job-dir", str(job_dir), "--phase", "app-data", "--timeout", "2")
+
+    rows = file_rows(job_dir)
+    assert sorted(rows) == ["Library/Mail/V10/mailbox", "Library/MobileSync"]
+    assert rows["Library/MobileSync"]["kind"] == "symlink"
+    assert rows["Library/MobileSync"]["status"] == "skipped"
+    assert not (dest_dir / "Library" / "MobileSync").exists()
