@@ -29,8 +29,19 @@ recorded.
 - `scan --phase <gated>` on a `customer-home` job without a recorded
   approval raises a `RescueError` naming the exact `approve` command to
   run (exit 1); nothing is scanned.
-- `copy`/`resume` stay ungated: rows for a gated phase can only exist if
-  an approved scan created them.
+- `copy`/`resume` are gated too, because manifests written by older
+  versions (or upgraded mid-job) can already contain gated rows created
+  without an approval record:
+  - `copy`/`resume --phase <gated>` on a `customer-home` job requires the
+    approval for that phase;
+  - `copy`/`resume --phase all` on a `customer-home` job refuses when the
+    manifest contains any rows of an unapproved gated phase, listing every
+    missing `approve` command (re-running verification on a finished older
+    job therefore requires recording the original customer consent once
+    per gated phase — deliberate);
+  - legacy phase selections (`important`, `photos`, `library`) select only
+    their own rows and stay ungated;
+  - restore jobs are never gated.
 - Legacy phases (`important`, `photos`, `library`, `all`) stay ungated for
   existing jobs and older scripts; the runbook documents that agents should
   use the customer phases.
