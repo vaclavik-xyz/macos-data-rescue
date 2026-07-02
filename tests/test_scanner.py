@@ -719,3 +719,27 @@ def test_customer_scan_rejects_restore_phase(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "restore requires a restore profile job" in result.stderr
+
+
+def test_restore_scan_limit_resumes_from_persisted_cursor(tmp_path: Path) -> None:
+    source = tmp_path / "rescued-user-data"
+    for name in ("a.txt", "b.txt", "c.txt"):
+        write_file(source / "Desktop" / name, name.encode())
+    job_dir = tmp_path / "restore-job"
+    run_cli(
+        "init", "--job-dir", str(job_dir), "--source", str(source),
+        "--dest", str(tmp_path / "new-home"), "--profile", "restore",
+    )
+
+    first = run_cli("scan", "--job-dir", str(job_dir), "--limit", "2")
+    first_cursor = config_value(job_dir, "scan_cursor:restore")
+    second = run_cli("scan", "--job-dir", str(job_dir), "--limit", "2")
+
+    rows = file_rows(job_dir)
+    assert "scanned=2" in first.stdout
+    assert "stopped=limit" in first.stdout
+    assert first_cursor == "Desktop/b.txt"
+    assert "scanned=1" in second.stdout
+    assert "stopped=" not in second.stdout
+    assert sorted(rows) == ["Desktop/a.txt", "Desktop/b.txt", "Desktop/c.txt"]
+    assert config_value(job_dir, "scan_cursor:restore") is None
