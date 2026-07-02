@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -319,8 +320,9 @@ def unapproved_gated_phases(job_dir: Path, phase: str) -> list[str]:
 
 
 def approval_required_message(job_dir: Path, phases: list[str]) -> str:
+    job_quoted = shlex.quote(str(job_dir))
     commands = "; ".join(
-        f"macos-data-rescue approve --job-dir {job_dir} --phase {phase}" for phase in phases
+        f"macos-data-rescue approve --job-dir {job_quoted} --phase {phase}" for phase in phases
     )
     return f"approval required for phase {', '.join(phases)}; run: {commands}"
 

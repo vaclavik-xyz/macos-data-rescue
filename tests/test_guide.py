@@ -258,3 +258,33 @@ def test_next_guidance_converges_end_to_end_for_rescue_and_restore(tmp_path: Pat
 
     assert drive_with_next(restore_job) == "restore-verified"
     assert (new_home / "Desktop" / "faktura.txt").read_bytes() == b"faktura"
+
+
+def test_next_requires_approval_before_driving_legacy_gated_rows(tmp_path: Path) -> None:
+    job_dir, _, _ = init_customer_job(tmp_path)
+    for phase in ("visible-home", "hidden-home"):
+        run_cli("scan", "--job-dir", str(job_dir), "--phase", phase)
+        run_cli("copy", "--job-dir", str(job_dir), "--phase", phase, "--timeout", "5")
+    # simulate a manifest from an older version: gated rows without approval
+    conn = sqlite3.connect(job_dir / "manifest.sqlite")
+    try:
+        conn.execute(
+            """
+            insert into files(relative_path, size, mtime_ns, mode, kind, phase,
+                              status, scanned_at, updated_at)
+            values('Library/Mail/V10/mailbox', 4, 0, 420, 'file', 'app-data',
+                   'pending', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    blocked = run_cli("next", "--job-dir", str(job_dir))
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "app-data")
+    unblocked = run_cli("next", "--job-dir", str(job_dir))
+
+    assert "state: approval-required phase=app-data" in blocked.stdout
+    assert f"approve --job-dir {job_dir} --phase app-data" in blocked.stdout
+    assert f"copy --job-dir {job_dir} --phase app-data" not in blocked.stdout
+    assert "action=copy phase=app-data" in unblocked.stdout

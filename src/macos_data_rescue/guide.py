@@ -82,6 +82,18 @@ def customer_lines(job_dir: Path, config: JobConfig, stats: dict[str, dict[str, 
     for phase in CORE_PHASES + GATED_PHASES:
         item = stats.get(phase)
         actionable = item["work"] + item["retryable"] if item else 0
+        has_gated_work = phase in GATED_PHASES and (
+            actionable or load_scan_cursor(job_dir, phase) is not None
+        )
+        if has_gated_work and load_approval(job_dir, phase) is None:
+            # rows or cursors from an older version exist, but the gate would
+            # reject the copy/scan command; the approval must come first
+            return [
+                f"state: approval-required phase={phase}",
+                "this job already contains rows for a gated phase without a recorded approval;",
+                "confirm the original customer consent and record it, then run next again:",
+                f"  {base_cmd('approve', '--job-dir', quoted(job_dir), '--phase', phase)}",
+            ]
         if actionable:
             return action_lines(job_dir, action="copy", phase=phase, rows=actionable)
         if load_scan_cursor(job_dir, phase) is not None:
