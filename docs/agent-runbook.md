@@ -212,8 +212,64 @@ Escalation options include imaging first, `ddrescue`, hardware-level recovery, o
 
 ## Restore to the customer's new disk
 
-Use a `restore` job (see README) with `--source` pointing at the rescued
-`user-data` folder and `--dest` at the target. Three supported setups:
+Use a `restore` job with `--source` pointing at the rescued `user-data`
+folder and `--dest` at the target. A restore job mirrors the rescued tree
+1:1 with no excludes.
+
+### Restore Intake Questions
+
+Confirm these before starting a restore:
+
+- Which setup applies: new Mac over Share Disk/TDM, external disk for the
+  customer, or running directly on the new Mac?
+- What is the exact destination path? Restore overwrites existing files at
+  the same paths, so the target should be a fresh home or empty folder.
+- For the Share Disk/TDM setup: what is the customer's account name on the
+  new Mac, for the ownership step after the copy?
+- Should the `Volume Applications/` and `Home Applications/` archive
+  folders be transferred too? They restore as plain folders either way and
+  never replace reinstalling applications.
+
+### Restore Preflight
+
+- The rescue job is finished and reviewed: `status` on the rescue job shows
+  no unexplained `failed`, `timed_out`, or `pending` rows.
+- The destination volume has enough free space for the rescued data.
+- The destination home/folder is fresh, or overwriting is explicitly
+  intended and approved.
+
+### Restore Command Sequence
+
+```bash
+JOB="/Volumes/RecoverySSD/Customer/.restore"
+SRC="/Volumes/RecoverySSD/Customer/user-data"
+DST="/Volumes/New Mac/Users/customer"
+
+uv run macos-data-rescue init --job-dir "$JOB" --source "$SRC" --dest "$DST" --profile restore
+uv run macos-data-rescue scan --job-dir "$JOB" --timeout 300
+uv run macos-data-rescue copy --job-dir "$JOB" --timeout 3600
+uv run macos-data-rescue status --job-dir "$JOB"
+```
+
+Restore `scan` takes no `--phase`; the job has a single scope and rows are
+recorded with phase `restore`. `stopped=timeout`/`stopped=limit` handling,
+the scan cursor, and `resume` work exactly as in the rescue direction.
+
+### Restore Verification And Handoff
+
+- `status` shows every row `copied` or intentionally `skipped` (symlinks);
+  `failed`, `timed_out`, and `pending` are zero or explained in notes.
+- Run `resume` once after the copy finishes: it must print `processed=0`,
+  which proves every file verified in place on the new disk.
+- Attach `status` and `report --format markdown` output of the restore job
+  to the service notes as transfer evidence.
+- For the Share Disk/TDM setup, the ownership step below was executed on
+  the new Mac before handing it over.
+- Sample restored files open from the destination.
+
+### Restore Setups
+
+Three supported setups:
 
 - **New Mac over Share Disk / Target Disk Mode:** dest is the customer's
   home on the mounted new Mac. Files will be owned by the service account.
@@ -228,7 +284,7 @@ Use a `restore` job (see README) with `--source` pointing at the rescued
   run the CLI there while logged in as the customer's user; ownership is
   then correct automatically. Requires Python 3.11+ (`uv`) on the new Mac.
 
-Notes:
+### Restore Notes
 
 - Restore copies `Volume Applications/` and `Home Applications/` into the
   destination as plain folders. Applications should still be reinstalled;
