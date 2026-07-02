@@ -92,11 +92,11 @@ Customer-home state machine, evaluated in order:
      missing;
    - when even reports exist: point at the runbook handoff checklist.
 
-Restore profile:
+Restore profile (copy-first, same as customer-home):
 
-1. Cursor or no rows -> suggest `scan`.
-2. Work rows (as above) -> suggest `copy`.
-3. All rows `copied`/`skipped` -> print the verification block: run
+1. Work rows (as above) -> suggest `copy`.
+2. Else a persisted cursor or no rows at all -> suggest `scan`.
+3. All rows `copied`/`skipped` and no cursor -> print the verification block: run
    `resume` (must print `processed=0`), capture `status` and
    `report --format markdown` into the job dir, cross-check the total row
    count against the rescue job's `copied=` count, and the ownership
