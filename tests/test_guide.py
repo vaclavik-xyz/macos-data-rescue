@@ -181,3 +181,63 @@ def test_next_does_not_resuggest_core_phases_after_full_home(tmp_path: Path) -> 
     assert "visible-home" not in result.stdout.split("ask-before")[0]
     assert "action=copy" in result.stdout
     assert f"copy --job-dir {job_dir} --phase full-home --timeout 3600" in result.stdout
+
+
+def run_suggested(command: str) -> str:
+    import shlex
+
+    tokens = shlex.split(command)
+    assert tokens[:3] == ["uv", "run", "macos-data-rescue"]
+    tokens = tokens[3:]
+    if ">" in tokens:
+        redirect_at = tokens.index(">")
+        target = Path(tokens[redirect_at + 1])
+        result = run_cli(*tokens[:redirect_at])
+        target.write_text(result.stdout)
+        return result.stdout
+    return run_cli(*tokens).stdout
+
+
+def drive_with_next(job_dir: Path, max_steps: int = 30) -> str:
+    for _step in range(max_steps):
+        out = run_cli("next", "--job-dir", str(job_dir)).stdout
+        if "done: follow the handoff checklist" in out:
+            return "done"
+        if "restore-copy-complete" in out:
+            commands = [
+                line.strip() for line in out.splitlines() if line.strip().startswith("uv run")
+            ]
+            for command in commands:
+                result = run_suggested(command)
+                if " resume " in f" {command} ":
+                    assert "processed=0" in result
+            return "restore-verified"
+        commands = [line.strip() for line in out.splitlines() if line.strip().startswith("uv run")]
+        assert commands, f"next offered no command:\n{out}"
+        run_suggested(commands[0])
+    raise AssertionError("next guidance did not converge")
+
+
+def test_next_guidance_converges_end_to_end_for_rescue_and_restore(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "faktura.txt", b"faktura")
+    write_file(source / ".zshrc", b"alias")
+    write_file(source / "Library" / "Mail" / "V10" / "mailbox", b"mail")
+    write_file(source / "Library" / "Caches" / "junk.bin", b"junk")
+    rescue_job = tmp_path / "rescue-job"
+    rescued = tmp_path / "user-data"
+    run_cli("init", "--job-dir", str(rescue_job), "--source", str(source), "--dest", str(rescued))
+
+    assert drive_with_next(rescue_job) == "done"
+    assert (rescued / "Desktop" / "faktura.txt").read_bytes() == b"faktura"
+    assert (tmp_path / "recovery-report.pdf").exists()
+
+    restore_job = tmp_path / "restore-job"
+    new_home = tmp_path / "new-home"
+    run_cli(
+        "init", "--job-dir", str(restore_job), "--source", str(rescued),
+        "--dest", str(new_home), "--profile", "restore",
+    )
+
+    assert drive_with_next(restore_job) == "restore-verified"
+    assert (new_home / "Desktop" / "faktura.txt").read_bytes() == b"faktura"
