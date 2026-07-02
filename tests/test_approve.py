@@ -113,3 +113,37 @@ def test_copy_of_preexisting_gated_rows_requires_approval(tmp_path: Path) -> Non
     unlocked = run_cli("copy", "--job-dir", str(job_dir), "--phase", "app-data", "--timeout", "5")
 
     assert "copied=1" in unlocked.stdout
+
+
+def test_reinit_cannot_change_profile_of_existing_job(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Library" / "Mail" / "V10" / "mailbox", b"secret mail")
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    # customer-home gate blocks the default scan
+    assert run_cli("scan", "--job-dir", str(job_dir), check=False).returncode == 1
+
+    reinit = run_cli(
+        "init", "--job-dir", str(job_dir), "--source", str(source),
+        "--dest", str(dest_dir), "--profile", "restore", check=False,
+    )
+
+    assert reinit.returncode == 1
+    assert "already initialized" in reinit.stderr
+    assert config_value(job_dir, "profile") == "customer-home"
+    # the gate is still in force after the rejected re-init
+    assert run_cli("scan", "--job-dir", str(job_dir), check=False).returncode == 1
+
+
+def test_reinit_with_same_profile_is_allowed(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    reinit = run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+
+    assert "initialized job=" in reinit.stdout
+    assert config_value(job_dir, "profile") == "customer-home"

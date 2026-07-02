@@ -164,6 +164,15 @@ def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobC
     for label, candidate in (("job-dir", job_resolved), ("dest", dest_resolved)):
         if is_same_or_inside(candidate, source_resolved):
             raise RescueError(f"{label} must not be inside source: {candidate}")
+    existing_profile = existing_job_profile(job_dir)
+    if existing_profile is not None and existing_profile != profile:
+        # Changing the profile of an existing job would move its rows between
+        # the gated customer-home workflow and the ungated restore workflow,
+        # silently defeating the approval gate. Re-init keeps the profile.
+        raise RescueError(
+            f"job already initialized with profile {existing_profile}; "
+            f"refusing to change it to {profile}"
+        )
     job_dir.mkdir(parents=True, exist_ok=True)
     db_path = manifest_path(job_dir)
     conn = sqlite3.connect(db_path)
@@ -190,6 +199,20 @@ def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobC
     finally:
         conn.close()
     return JobConfig(job_dir=job_dir, source=source_resolved, dest=dest_resolved, profile=profile)
+
+
+def existing_job_profile(job_dir: Path) -> str | None:
+    db_path = manifest_path(job_dir)
+    if not db_path.exists():
+        return None
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute("select value from config where key = 'profile'").fetchone()
+    except sqlite3.DatabaseError:
+        return None
+    finally:
+        conn.close()
+    return row[0] if row else None
 
 
 def is_same_or_inside(candidate: Path, parent: Path) -> bool:
