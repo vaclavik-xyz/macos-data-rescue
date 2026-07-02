@@ -262,11 +262,14 @@ the scan cursor, and `resume` work exactly as in the rescue direction.
 
 ### Restore Verification And Handoff
 
-- Cross-check the counts: restore `scan` should report `scanned=` equal to
-  the rescue job's `copied=` count (every copied file produced exactly one
-  file in `user-data/`; skipped rows produce none). Investigate any
-  difference — it means files were added to or removed from the rescued
-  tree by hand.
+- Cross-check the counts once the restore scan has completed (no
+  `stopped=` in the output): the total row count in the restore job's
+  `status` (sum of all statuses) must equal the rescue job's `copied=`
+  count — every copied file produced exactly one file in `user-data/`,
+  and skipped rows produced none. A single uninterrupted scan prints the
+  same number as `scanned=`; interrupted-and-resumed scans only show it in
+  `status`. Investigate any difference — it means files were added to or
+  removed from the rescued tree by hand.
 - `status` shows every row `copied` or intentionally `skipped` (symlinks);
   `failed`, `timed_out`, and `pending` are zero or explained in notes.
 - Run `resume` once after the copy finishes: it must print `processed=0`,
