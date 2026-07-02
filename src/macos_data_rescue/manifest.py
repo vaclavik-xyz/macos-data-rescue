@@ -13,7 +13,7 @@ from .errors import RescueError
 
 MANIFEST_NAME = "manifest.sqlite"
 WARNING_UNCHANGED = object()
-GATED_PHASES = ("app-data", "applications", "full-home")
+GATED_PHASES = ("app-data", "applications", "full-home", "library")
 
 
 @dataclass(frozen=True)

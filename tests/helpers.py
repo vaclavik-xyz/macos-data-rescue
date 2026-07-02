@@ -35,6 +35,9 @@ def init_and_scan(tmp_path: Path, source: Path | None = None) -> tuple[Path, Pat
     source_dir = source or tmp_path / "source-home"
     dest_dir = tmp_path / "dest"
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source_dir), "--dest", str(dest_dir))
+    # the legacy default scan includes ~/Library and is gated; these fixtures
+    # represent jobs with the customer consent already recorded
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "library")
     run_cli("scan", "--job-dir", str(job_dir))
     return job_dir, source_dir, dest_dir
 

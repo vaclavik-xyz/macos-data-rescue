@@ -325,6 +325,7 @@ def test_scan_migrates_existing_manifest_for_file_warnings(tmp_path: Path) -> No
     finally:
         conn.close()
 
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "library")
     run_cli("scan", "--job-dir", str(job_dir))
     payload = json.loads(run_cli("report", "--job-dir", str(job_dir), "--format", "json").stdout)
 

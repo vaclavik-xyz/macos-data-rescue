@@ -4,7 +4,6 @@ import shlex
 from pathlib import Path
 
 from .manifest import (
-    GATED_PHASES,
     JobConfig,
     connect,
     load_approval,
@@ -16,6 +15,9 @@ from .manifest import (
 
 
 CORE_PHASES = ("visible-home", "hidden-home")
+# next suggests only the customer phases; the legacy library/all gate exists
+# in scan/copy but is never part of the guided flow
+SUGGESTED_GATES = ("app-data", "applications", "full-home")
 LEGACY_PHASES = {"important", "photos", "library", "all"}
 SCAN_TIMEOUT = "300"
 COPY_TIMEOUT = "3600"
@@ -79,10 +81,10 @@ def customer_lines(job_dir: Path, config: JobConfig, stats: dict[str, dict[str, 
             f"  {base_cmd('status', '--job-dir', quoted(job_dir))}",
         ]
     full_home_active = phase_touched(job_dir, stats, "full-home")
-    for phase in CORE_PHASES + GATED_PHASES:
+    for phase in CORE_PHASES + SUGGESTED_GATES:
         item = stats.get(phase)
         actionable = item["work"] + item["retryable"] if item else 0
-        has_gated_work = phase in GATED_PHASES and (
+        has_gated_work = phase in SUGGESTED_GATES and (
             actionable or load_scan_cursor(job_dir, phase) is not None
         )
         if has_gated_work and load_approval(job_dir, phase) is None:
@@ -102,7 +104,7 @@ def customer_lines(job_dir: Path, config: JobConfig, stats: dict[str, dict[str, 
         if phase in CORE_PHASES and not full_home_active and not phase_touched(job_dir, stats, phase):
             return action_lines(job_dir, action="scan", phase=phase, reason="unscanned")
         if (
-            phase in GATED_PHASES
+            phase in SUGGESTED_GATES
             and not phase_touched(job_dir, stats, phase)
             and load_approval(job_dir, phase) is not None
         ):
@@ -169,7 +171,7 @@ def terminal_lines(job_dir: Path, config: JobConfig, stats: dict[str, dict[str, 
     lines = ["state: core-phases-complete"]
     gates = [
         phase
-        for phase in GATED_PHASES
+        for phase in SUGGESTED_GATES
         if not phase_touched(job_dir, stats, phase) and load_approval(job_dir, phase) is None
     ]
     if gates:

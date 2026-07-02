@@ -180,6 +180,7 @@ def test_next_restore_with_exhausted_failures_requires_review_not_verification(t
 
 def test_next_notes_legacy_only_manifest(tmp_path: Path) -> None:
     job_dir, _, _ = init_customer_job(tmp_path)
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "library")
     run_cli("scan", "--job-dir", str(job_dir))
 
     result = run_cli("next", "--job-dir", str(job_dir))

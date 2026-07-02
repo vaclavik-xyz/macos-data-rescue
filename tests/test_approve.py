@@ -48,10 +48,36 @@ def test_approve_rejects_non_gated_phase(tmp_path: Path) -> None:
     assert "invalid choice" in result.stderr
 
 
-def test_legacy_library_scan_stays_ungated(tmp_path: Path) -> None:
+def test_legacy_library_scan_requires_approval(tmp_path: Path) -> None:
     job_dir = init_job_with_library(tmp_path)
 
-    result = run_cli("scan", "--job-dir", str(job_dir), "--phase", "library")
+    blocked = run_cli("scan", "--job-dir", str(job_dir), "--phase", "library", check=False)
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "library")
+    unlocked = run_cli("scan", "--job-dir", str(job_dir), "--phase", "library")
+
+    assert blocked.returncode == 1
+    assert "approval required for phase library" in blocked.stderr
+    assert "scanned=1" in unlocked.stdout
+
+
+def test_default_scan_requires_library_approval(tmp_path: Path) -> None:
+    job_dir = init_job_with_library(tmp_path)
+
+    blocked = run_cli("scan", "--job-dir", str(job_dir), check=False)
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "library")
+    unlocked = run_cli("scan", "--job-dir", str(job_dir))
+
+    assert blocked.returncode == 1
+    assert "approval required for phase library" in blocked.stderr
+    assert "~/Library" in blocked.stderr
+    assert file_rows(job_dir) == {} or "scanned=" not in blocked.stdout
+    assert "scanned=2" in unlocked.stdout
+
+
+def test_legacy_important_scan_stays_ungated(tmp_path: Path) -> None:
+    job_dir = init_job_with_library(tmp_path)
+
+    result = run_cli("scan", "--job-dir", str(job_dir), "--phase", "important")
 
     assert "scanned=1" in result.stdout
 

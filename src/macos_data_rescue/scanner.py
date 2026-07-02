@@ -128,6 +128,14 @@ def scan_job(
     if config.profile == "customer-home" and scan_phase in GATED_PHASES:
         if load_approval(job_dir, scan_phase) is None:
             raise RescueError(approval_required_message(job_dir, [scan_phase]))
+    if config.profile == "customer-home" and scan_phase == "all":
+        # the legacy default scan walks the whole home including ~/Library,
+        # so it needs the library approval like the explicit library phase
+        if load_approval(job_dir, "library") is None:
+            raise RescueError(
+                approval_required_message(job_dir, ["library"])
+                + " (the default scan includes ~/Library)"
+            )
     if not config.source.exists():
         raise RescueError(f"source does not exist: {config.source}")
     migrate_manifest(job_dir)

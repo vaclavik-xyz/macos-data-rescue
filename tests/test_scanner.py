@@ -136,6 +136,7 @@ def test_resumed_scan_timeout_checks_skipped_cursor_items(tmp_path: Path, monkey
     job_dir = tmp_path / "job"
     dest_dir = tmp_path / "dest"
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "library")
     conn = sqlite3.connect(job_dir / "manifest.sqlite")
     try:
         conn.execute(
@@ -177,6 +178,7 @@ def test_stale_cursor_restart_keeps_original_scan_deadline(tmp_path: Path, monke
     job_dir = tmp_path / "job"
     dest_dir = tmp_path / "dest"
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "library")
     conn = sqlite3.connect(job_dir / "manifest.sqlite")
     try:
         conn.execute(
@@ -227,6 +229,7 @@ def test_scan_timeout_commits_partial_manifest(tmp_path: Path, monkeypatch) -> N
     job_dir = tmp_path / "job"
     dest_dir = tmp_path / "dest"
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "library")
 
     def slow_files(source_path: Path, *, phase: str):
         for index in range(5):

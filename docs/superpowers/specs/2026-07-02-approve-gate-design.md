@@ -42,11 +42,20 @@ recorded.
   - legacy phase selections (`important`, `photos`, `library`) select only
     their own rows and stay ungated;
   - restore jobs are never gated.
-- Legacy phases (`important`, `photos`, `library`) stay ungated for
-  existing jobs and older scripts; the runbook documents that agents should
-  use the customer phases. `all` is ungated only as long as it selects no
-  rows of an unapproved gated phase (see the copy/resume rule above); the
-  legacy `scan --phase all` itself records no gated customer phases.
+- Legacy phases that reach `~/Library` are gated too, because the legacy
+  default `scan` (no `--phase`, i.e. `all`) walks the entire home including
+  Library and is the most likely accidental invocation by a weak agent:
+  - `library` joins the gated set (`approve --phase library`);
+  - `scan --phase all` on a `customer-home` job requires the `library`
+    approval, with a message explaining that the default scan includes
+    `~/Library`;
+  - `important` and `photos` stay ungated (Desktop/Documents/Downloads/
+    Pictures/Movies/Music are the intake-approved core scope);
+  - old scripts using the legacy flow therefore need one
+    `approve --phase library` per job — a deliberate breaking change in
+    favor of the gate.
+- `next` never suggests legacy phases; its gate list stays `app-data`,
+  `applications`, `full-home`.
 - Restore jobs are unaffected (they have a single, already-approved scope
   agreed at intake).
 
