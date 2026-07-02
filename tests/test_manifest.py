@@ -363,3 +363,25 @@ def test_manifest_selected_files_are_streamed(tmp_path: Path) -> None:
     assert not isinstance(rows, list)
     iterator = iter(rows)
     assert next(iterator)["relative_path"] == "Desktop/a.txt"
+
+
+def test_init_accepts_restore_profile(tmp_path: Path) -> None:
+    source = tmp_path / "rescued" / "user-data"
+    write_file(source / "Desktop" / "faktura.txt", b"data")
+    job_dir = tmp_path / "restore-job"
+    dest_dir = tmp_path / "new-home"
+
+    result = run_cli(
+        "init",
+        "--job-dir",
+        str(job_dir),
+        "--source",
+        str(source),
+        "--dest",
+        str(dest_dir),
+        "--profile",
+        "restore",
+    )
+
+    assert "initialized job=" in result.stdout
+    assert config_value(job_dir, "profile") == "restore"

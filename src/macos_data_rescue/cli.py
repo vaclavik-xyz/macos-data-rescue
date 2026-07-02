@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--job-dir", required=True, type=Path)
     init_parser.add_argument("--source", required=True, type=Path)
     init_parser.add_argument("--dest", required=True, type=Path)
-    init_parser.add_argument("--profile", default="customer-home", choices=("customer-home",))
+    init_parser.add_argument("--profile", default="customer-home", choices=("customer-home", "restore"))
 
     scan_parser = subparsers.add_parser("scan", help="Scan source files into the manifest.")
     scan_parser.add_argument("--job-dir", required=True, type=Path)
