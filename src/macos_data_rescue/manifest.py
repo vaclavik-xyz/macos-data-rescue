@@ -208,8 +208,10 @@ def existing_job_profile(job_dir: Path) -> str | None:
     conn = sqlite3.connect(db_path)
     try:
         row = conn.execute("select value from config where key = 'profile'").fetchone()
-    except sqlite3.DatabaseError:
-        return None
+    except sqlite3.DatabaseError as exc:
+        # An existing manifest that cannot be read must not be treated as a
+        # fresh job: that would let a re-init silently rewrite the profile.
+        raise RescueError(f"existing manifest cannot be read: {db_path}: {exc}") from exc
     finally:
         conn.close()
     return row[0] if row else None

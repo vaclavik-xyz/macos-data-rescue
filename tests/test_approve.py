@@ -147,3 +147,21 @@ def test_reinit_with_same_profile_is_allowed(tmp_path: Path) -> None:
 
     assert "initialized job=" in reinit.stdout
     assert config_value(job_dir, "profile") == "customer-home"
+
+
+def test_reinit_fails_closed_on_unreadable_manifest(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    job_dir = tmp_path / "job"
+    dest_dir = tmp_path / "dest"
+    run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    # corrupt the manifest so its profile cannot be read
+    (job_dir / "manifest.sqlite").write_bytes(b"not a sqlite database at all")
+
+    result = run_cli(
+        "init", "--job-dir", str(job_dir), "--source", str(source),
+        "--dest", str(dest_dir), "--profile", "restore", check=False,
+    )
+
+    assert result.returncode == 1
+    assert "existing manifest cannot be read" in result.stderr
