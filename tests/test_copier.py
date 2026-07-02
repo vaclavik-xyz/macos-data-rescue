@@ -700,3 +700,35 @@ def test_copy_returns_zero_when_individual_files_fail(tmp_path: Path) -> None:
 
     assert result.returncode == 0
     assert "failed=1" in result.stdout
+
+
+def test_restore_copy_round_trip_records_symlinks_and_resumes_clean(tmp_path: Path) -> None:
+    source = tmp_path / "rescued-user-data"
+    write_file(source / "Desktop" / "faktura.txt", b"desktop")
+    write_file(source / "Projects" / "web" / "node_modules" / "pkg" / "index.js", b"js")
+    write_file(source / "Volume Applications" / "Legacy.app" / "Contents" / "Info.plist", b"app")
+    outside = tmp_path / "outside-dir"
+    write_file(outside / "secret.txt", b"secret")
+    os.symlink(outside, source / "Desktop" / "rucne-pridany-odkaz")
+    job_dir = tmp_path / "restore-job"
+    dest_dir = tmp_path / "new-home"
+    run_cli(
+        "init", "--job-dir", str(job_dir), "--source", str(source),
+        "--dest", str(dest_dir), "--profile", "restore",
+    )
+    run_cli("scan", "--job-dir", str(job_dir))
+
+    copy = run_cli("copy", "--job-dir", str(job_dir), "--phase", "restore", "--timeout", "5")
+    resume = run_cli("resume", "--job-dir", str(job_dir), "--timeout", "5")
+
+    rows = file_rows(job_dir)
+    assert "copied=3" in copy.stdout
+    assert "skipped=1" in copy.stdout
+    assert (dest_dir / "Desktop" / "faktura.txt").read_bytes() == b"desktop"
+    assert (dest_dir / "Projects" / "web" / "node_modules" / "pkg" / "index.js").read_bytes() == b"js"
+    assert (dest_dir / "Volume Applications" / "Legacy.app" / "Contents" / "Info.plist").read_bytes() == b"app"
+    assert rows["Desktop/rucne-pridany-odkaz"]["kind"] == "symlink"
+    assert rows["Desktop/rucne-pridany-odkaz"]["status"] == "skipped"
+    assert not (dest_dir / "Desktop" / "rucne-pridany-odkaz").exists()
+    assert "processed=0" in resume.stdout
+    assert "skipped=4" in resume.stdout
