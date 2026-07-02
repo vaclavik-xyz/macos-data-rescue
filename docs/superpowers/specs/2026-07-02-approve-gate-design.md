@@ -42,9 +42,11 @@ recorded.
   - legacy phase selections (`important`, `photos`, `library`) select only
     their own rows and stay ungated;
   - restore jobs are never gated.
-- Legacy phases (`important`, `photos`, `library`, `all`) stay ungated for
+- Legacy phases (`important`, `photos`, `library`) stay ungated for
   existing jobs and older scripts; the runbook documents that agents should
-  use the customer phases.
+  use the customer phases. `all` is ungated only as long as it selects no
+  rows of an unapproved gated phase (see the copy/resume rule above); the
+  legacy `scan --phase all` itself records no gated customer phases.
 - Restore jobs are unaffected (they have a single, already-approved scope
   agreed at intake).
 
