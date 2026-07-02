@@ -239,3 +239,8 @@ Notes:
   tree produced by this tool contains none.
 - Symbolic links recorded in the manifest are not recreated (same behavior
   as rescue); check `report` for `skipped` rows before handoff.
+- Reporting: the customer-facing PDF is the one generated from the rescue
+  job (`customer-report`). For the restore transfer itself, attach
+  `status` and `report --format markdown` output of the restore job to the
+  service notes as evidence that every rescued file reached the new disk;
+  do not generate `customer-report` from a restore job.
