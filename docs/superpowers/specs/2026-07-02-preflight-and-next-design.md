@@ -63,18 +63,20 @@ Usage: `next --job-dir JOB`.
 - Corrupt/unreadable manifest: normal error, exit 1.
 
 Suggested commands are printed exactly as runnable lines in runbook style
-(`uv run macos-data-rescue ... --job-dir "<job>" ...`), scan timeout 300,
-copy timeout 3600.
+with every interpolated path escaped via `shlex.quote` (paths may contain
+quotes, `$`, or backticks), scan timeout 300, copy timeout 3600.
 
 Customer-home state machine, evaluated in order:
 
-1. Core phases `visible-home`, then `hidden-home`:
-   - a persisted scan cursor for the phase -> suggest the same `scan`
-     (resume);
-   - no rows and no cursor -> suggest `scan` (skipped entirely when any
-     `full-home` rows or cursor exist — full-home supersedes core);
+1. Core phases `visible-home`, then `hidden-home`. Within a phase,
+   copy-first — committed rows are rescued before more scanning, matching
+   the runbook's stopped=timeout guidance:
    - rows with status `pending`/`copying`, or `failed`/`timed_out` with
      `attempts < 2` -> suggest `copy` for the phase;
+   - else a persisted scan cursor for the phase -> suggest the same `scan`
+     (resume);
+   - else no rows and no cursor -> suggest `scan` (skipped entirely when
+     any `full-home` rows or cursor exist — full-home supersedes core);
    - otherwise the phase is complete -> evaluate the next one.
 2. Gated phases `app-data`, `applications`, `full-home` that already have
    rows or a cursor are driven to completion like core phases.
