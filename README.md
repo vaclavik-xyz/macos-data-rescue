@@ -69,9 +69,11 @@ uv run macos-data-rescue copy --job-dir "$JOB" --phase hidden-home --timeout 360
 Ask the operator/customer before slower or less portable scopes:
 
 ```bash
+uv run macos-data-rescue approve --job-dir "$JOB" --phase app-data --by "customer name"
 uv run macos-data-rescue scan --job-dir "$JOB" --phase app-data --timeout 300
 uv run macos-data-rescue copy --job-dir "$JOB" --phase app-data --timeout 3600
 
+uv run macos-data-rescue approve --job-dir "$JOB" --phase applications --by "customer name"
 uv run macos-data-rescue scan --job-dir "$JOB" --phase applications --timeout 300
 uv run macos-data-rescue copy --job-dir "$JOB" --phase applications --timeout 3600
 ```
@@ -79,6 +81,7 @@ uv run macos-data-rescue copy --job-dir "$JOB" --phase applications --timeout 36
 If the customer explicitly wants maximum practical home coverage and there is enough time/space, run full-home after the focused phases:
 
 ```bash
+uv run macos-data-rescue approve --job-dir "$JOB" --phase full-home --by "customer name"
 uv run macos-data-rescue scan --job-dir "$JOB" --phase full-home --timeout 300
 uv run macos-data-rescue resume --job-dir "$JOB" --phase all --timeout 3600
 ```
