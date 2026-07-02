@@ -13,6 +13,7 @@ from .manifest import (
     clear_scan_cursor,
     load_config,
     load_scan_cursor,
+    mark_scan_complete,
     migrate_manifest,
     scan_cursor_key,
     upsert_scanned_files,
@@ -142,6 +143,7 @@ def scan_job(
         )
     if limiter.stopped is None:
         clear_scan_cursor(job_dir, scan_phase)
+        mark_scan_complete(job_dir, scan_phase)
     return ScanSummary(scanned=count, stopped=limiter.stopped)
 
 

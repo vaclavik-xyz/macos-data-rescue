@@ -266,6 +266,37 @@ def clear_scan_cursor(job_dir: Path, phase: str) -> None:
         conn.close()
 
 
+def scan_done_key(phase: str) -> str:
+    return f"scan_done:{phase}"
+
+
+def load_scan_done(job_dir: Path, phase: str) -> str | None:
+    conn = connect(job_dir)
+    try:
+        row = conn.execute(
+            "select value from config where key = ?",
+            (scan_done_key(phase),),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row["value"] if row else None
+
+
+def mark_scan_complete(job_dir: Path, phase: str) -> None:
+    conn = connect(job_dir)
+    try:
+        conn.execute(
+            """
+            insert into config(key, value) values(?, ?)
+            on conflict(key) do update set value = excluded.value
+            """,
+            (scan_done_key(phase), utc_now()),
+        )
+        commit_scan_batch(conn)
+    finally:
+        conn.close()
+
+
 def upsert_scanned_files(
     job_dir: Path,
     files: Iterable[ScannedFile],
