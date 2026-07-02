@@ -107,7 +107,7 @@ uv run macos-data-rescue copy --job-dir "$JOB" --timeout 3600
 uv run macos-data-rescue status --job-dir "$JOB"
 ```
 
-Restore jobs have a single scope: `scan` takes no `--phase` and records all rows with phase `restore` (`copy`/`resume` may use `--phase restore` or the default `all`). Existing destination files at the same paths are overwritten — restore into a fresh home folder. Empty directories are not recreated, matching the tool-wide limitation; a rescued tree produced by this tool contains none. Files written over Share Disk / Target Disk Mode are owned by the service account; fix ownership on the new Mac afterwards (see [docs/agent-runbook.md](docs/agent-runbook.md)).
+Restore jobs have a single scope: `scan` takes no `--phase` and records all rows with phase `restore` (`copy`/`resume` may use `--phase restore` or the default `all`). Existing destination files at the same paths are overwritten — restore into a fresh home folder. Two tool-wide limitations still apply: empty directories are not recreated (a rescued tree produced by this tool contains none), and symbolic links are recorded as `skipped` instead of recreated — check `report` before handoff. Files written over Share Disk / Target Disk Mode are owned by the service account; fix ownership on the new Mac afterwards (see [docs/agent-runbook.md](docs/agent-runbook.md)).
 
 ## Exit codes
 
