@@ -213,8 +213,11 @@ Escalation options include imaging first, `ddrescue`, hardware-level recovery, o
 ## Restore to the customer's new disk
 
 Use a `restore` job with `--source` pointing at the rescued `user-data`
-folder and `--dest` at the target. A restore job mirrors the rescued tree
-1:1 with no excludes.
+folder and `--dest` at the target. A restore scan applies none of the
+rescue excludes — every file present in the rescued tree is selected.
+Tool-wide copy limitations still apply: symlinks and other non-regular
+entries are recorded as `skipped`, and empty directories are not recreated
+(see Restore Notes).
 
 ### Restore Intake Questions
 
