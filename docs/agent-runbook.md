@@ -118,6 +118,8 @@ uv run macos-data-rescue scan --job-dir "$JOB" --phase full-home --timeout 300
 uv run macos-data-rescue resume --job-dir "$JOB" --phase all --timeout 3600
 ```
 
+If the `applications` phase also ran, user applications from `~/Applications` end up twice under `DST` (`Home Applications/` from the applications phase and `Applications/` from full-home). This overlap is expected; account for it when estimating destination space.
+
 Legacy phase names remain supported for older jobs and scripts:
 
 ```bash
@@ -260,6 +262,11 @@ the scan cursor, and `resume` work exactly as in the rescue direction.
 
 ### Restore Verification And Handoff
 
+- Cross-check the counts: restore `scan` should report `scanned=` equal to
+  the rescue job's `copied=` count (every copied file produced exactly one
+  file in `user-data/`; skipped rows produce none). Investigate any
+  difference — it means files were added to or removed from the rescued
+  tree by hand.
 - `status` shows every row `copied` or intentionally `skipped` (symlinks);
   `failed`, `timed_out`, and `pending` are zero or explained in notes.
 - Run `resume` once after the copy finishes: it must print `processed=0`,
