@@ -35,13 +35,24 @@ Confirm these before starting a real customer run:
 - Is a broader `full-home` attempt requested after focused recovery, and is there enough destination space/time?
 - Does the source look unstable enough to stop and image/escalate before file-level copy?
 
-Useful checks:
+Run the built-in preflight instead of composing shell checks by hand:
 
 ```bash
 SRC="/Volumes/Macintosh HD - Data/Users/customer"
 DST="/Volumes/RecoverySSD/Customer/user-data"
 JOB="/Volumes/RecoverySSD/Customer/.rescue"
 
+uv run macos-data-rescue preflight --job-dir "$JOB" --source "$SRC" --dest "$DST"
+```
+
+It verifies the source exists, is readable and is not `/`, that `JOB` and
+`DST` are outside the source, reports the source mount's read-only state,
+write-probes `JOB` and `DST` (never the source), and checks dest free space.
+Exit code 1 means fix the failures before continuing. On an existing job,
+run it with `--job-dir` only; it then also compares free space against the
+bytes the manifest still needs. Manual fallback checks:
+
+```bash
 test -d "$SRC"
 test "$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$SRC")" != "/"
 df -h "$(dirname "$DST")" "$(dirname "$JOB")"
@@ -57,6 +68,23 @@ mount | grep -F "/Volumes/Macintosh HD"
 - Destination writes are allowed only under `DST` and `JOB`.
 
 The CLI also refuses job/destination paths inside source, but operators must still verify paths before running commands.
+
+## Guided Mode For Agents
+
+After `init`, you do not have to track the workflow state yourself. After
+every command, run:
+
+```bash
+uv run macos-data-rescue next --job-dir "$JOB"
+```
+
+and execute exactly what it prints. `next` applies copy-first ordering
+(committed rows are rescued before more scanning), resumes interrupted
+scans, and stops retrying files whose failures are exhausted. Commands
+listed under `ask-before:` / "run (only after operator/customer approval)"
+still require explicit approval from the operator or customer — never run
+them on your own. `next` works for both rescue and restore jobs; the manual
+sequence below documents what it will walk you through.
 
 ## Command Sequence
 

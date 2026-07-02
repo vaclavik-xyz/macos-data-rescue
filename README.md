@@ -18,6 +18,8 @@ The goal is simple: **one bad file must not stop the whole rescue**. The tool sc
 - macOS extended attributes and resource forks are copied best-effort with a native libSystem xattr backend.
 - `copy` / `resume` clean stale internal `*.rescue-tmp` files in relevant destination directories before copying.
 - `status` prints manifest counts.
+- `preflight` runs the environment checks from the runbook (source readable and not `/`, job/dest outside the source, mount read-only state, write probes, free space vs remaining manifest bytes) and exits non-zero on failure.
+- `next` inspects the manifest and prints the exact next recommended command, so the operator — human or agent — never has to track the workflow state machine; approval-gated phases are listed separately and are never auto-suggested as required.
 - `report` prints Markdown or JSON suitable for service notes, including per-file suspected iCloud placeholder warnings.
 - `customer-report` writes an English or Czech customer-facing Markdown/PDF handoff report into the visible recovery root.
 
@@ -33,6 +35,8 @@ No runtime dependencies are used; `pytest` is only a dev dependency.
 ## Typical service workflow
 
 Before using the CLI on real customer data, read [docs/agent-runbook.md](docs/agent-runbook.md).
+
+The workflow below can also be driven step-by-step: run `preflight` before `init`, then after every command run `next --job-dir "$JOB"` and execute what it prints. Phases marked "ask first" still require operator/customer approval.
 
 Assume the damaged Mac is mounted on a healthy service Mac as:
 
