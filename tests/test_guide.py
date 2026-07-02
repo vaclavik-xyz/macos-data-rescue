@@ -138,6 +138,30 @@ def test_next_guides_restore_job_to_verification(tmp_path: Path) -> None:
     assert "ownership" in done.stdout
 
 
+def test_next_restore_with_exhausted_failures_requires_review_not_verification(tmp_path: Path) -> None:
+    rescued = tmp_path / "user-data"
+    write_file(rescued / "Desktop" / "a.txt", b"a")
+    job_dir = tmp_path / "restore-job"
+    run_cli(
+        "init", "--job-dir", str(job_dir), "--source", str(rescued),
+        "--dest", str(tmp_path / "new-home"), "--profile", "restore",
+    )
+    run_cli("scan", "--job-dir", str(job_dir))
+    conn = sqlite3.connect(job_dir / "manifest.sqlite")
+    try:
+        conn.execute("update files set status = 'failed', attempts = 2")
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = run_cli("next", "--job-dir", str(job_dir))
+
+    assert "restore-copy-complete" not in result.stdout
+    assert "must print processed=0" not in result.stdout
+    assert "review:" in result.stdout
+    assert "state: restore-needs-review" in result.stdout
+
+
 def test_next_notes_legacy_only_manifest(tmp_path: Path) -> None:
     job_dir, _, _ = init_customer_job(tmp_path)
     run_cli("scan", "--job-dir", str(job_dir))

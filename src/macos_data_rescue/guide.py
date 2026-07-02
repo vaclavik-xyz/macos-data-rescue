@@ -93,6 +93,14 @@ def restore_lines(job_dir: Path, stats: dict[str, dict[str, int]]) -> list[str]:
     )
     if scan_incomplete:
         return action_lines(job_dir, action="scan", reason="scan-not-complete")
+    if item is not None and item["exhausted"]:
+        return [
+            "state: restore-needs-review",
+            "resume would retry the exhausted rows, so the restore is not complete;",
+            "inspect the technician report and resolve or acknowledge every failed row:",
+            f"  {base_cmd('report', '--job-dir', quoted(job_dir), '--format', 'markdown')}"
+            f" > {quoted(job_dir / 'report.md')}",
+        ]
     return [
         "state: restore-copy-complete",
         "verify:",
