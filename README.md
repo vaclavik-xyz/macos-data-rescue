@@ -92,6 +92,23 @@ uv run macos-data-rescue report --job-dir "$JOB" --format json > "$JOB/report.js
 
 `customer-report` writes a customer-facing handoff report to the recovery root by default, next to `user-data/` as `recovery-report.pdf` or `recovery-report.md`. English is the default. Use `--language cs` for Czech output, which defaults to `recovery-report-cs.pdf` or `recovery-report-cs.md` so it does not overwrite the English report. The PDF includes a summary, copied-data status, top-level recovered folder breakdown, and Library-area breakdown when applicable. The detailed `report` command stays on stdout and is intended for technician notes or `.rescue` artifacts.
 
+## Restore to the customer's new disk
+
+The same CLI handles the opposite direction: rescued data on the service disk -> the customer's new disk. A `restore` job mirrors the rescued tree 1:1 — no excludes are applied, and `Volume Applications/` / `Home Applications/` folders are copied as-is.
+
+```bash
+JOB="/Volumes/RecoverySSD/Customer/.restore"
+SRC="/Volumes/RecoverySSD/Customer/user-data"
+DST="/Volumes/Novy Mac/Users/customer"
+
+uv run macos-data-rescue init --job-dir "$JOB" --source "$SRC" --dest "$DST" --profile restore
+uv run macos-data-rescue scan --job-dir "$JOB"
+uv run macos-data-rescue copy --job-dir "$JOB" --timeout 3600
+uv run macos-data-rescue status --job-dir "$JOB"
+```
+
+Restore jobs have a single scope: `scan` takes no `--phase` and records all rows with phase `restore` (`copy`/`resume` may use `--phase restore` or the default `all`). Existing destination files at the same paths are overwritten — restore into a fresh home folder. Empty directories are not recreated, matching the tool-wide limitation; a rescued tree produced by this tool contains none. Files written over Share Disk / Target Disk Mode are owned by the service account; fix ownership on the new Mac afterwards (see [docs/agent-runbook.md](docs/agent-runbook.md)).
+
 ## Exit codes
 
 | Code | Meaning |
@@ -120,6 +137,7 @@ Legacy phases remain available for existing jobs and older scripts:
 | `photos` | `Pictures`, `Movies`, `Music` |
 | `library` | selected `Library` data, excluding caches/logs |
 | `all` | all manifest rows for copy/resume; default scan keeps the original full-home behavior |
+| `restore` | restore-profile jobs only: every file in the rescued tree, 1:1, no excludes |
 
 Re-running `scan` for another phase upserts rows into the same manifest without deleting earlier phase results. Re-running the same phase after `stopped=timeout` or `stopped=limit` resumes after that phase's saved scan cursor; when the phase reaches the end, the cursor is cleared so future scans refresh from the beginning.
 

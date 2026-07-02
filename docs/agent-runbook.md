@@ -209,3 +209,33 @@ Escalation options include imaging first, `ddrescue`, hardware-level recovery, o
 - iCloud placeholder warnings are explained as possibly not physically present on disk.
 - Metadata limitations are explained when warnings exist or when app bundles/resource-fork-heavy data matters.
 - The original source was not modified by the rescue workflow.
+
+## Restore to the customer's new disk
+
+Use a `restore` job (see README) with `--source` pointing at the rescued
+`user-data` folder and `--dest` at the target. Three supported setups:
+
+- **New Mac over Share Disk / Target Disk Mode:** dest is the customer's
+  home on the mounted new Mac. Files will be owned by the service account.
+  After the copy finishes, on the new Mac run
+  `diskutil resetUserPermissions / $(id -u customer)` (or
+  `sudo chown -R customer:staff /Users/customer`) before handing the Mac
+  over, otherwise the customer's account cannot use its own files.
+- **External disk for the customer:** dest is a folder on the new external
+  disk. macOS ignores ownership on external volumes by default, so no
+  ownership step is needed.
+- **Directly on the new Mac:** attach the service disk to the new Mac and
+  run the CLI there while logged in as the customer's user; ownership is
+  then correct automatically. Requires Python 3.11+ (`uv`) on the new Mac.
+
+Notes:
+
+- Restore copies `Volume Applications/` and `Home Applications/` into the
+  destination as plain folders. Applications should still be reinstalled;
+  these folders are a data archive, not an installation.
+- Restore overwrites existing destination files at the same paths; use a
+  fresh home folder.
+- Empty directories are not recreated (tool-wide limitation); a rescued
+  tree produced by this tool contains none.
+- Symbolic links recorded in the manifest are not recreated (same behavior
+  as rescue); check `report` for `skipped` rows before handoff.
