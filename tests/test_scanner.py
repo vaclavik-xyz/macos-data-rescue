@@ -688,3 +688,34 @@ def test_restore_scan_records_everything_without_excludes(tmp_path: Path) -> Non
         "Volume Applications/Legacy.app/Contents/Info.plist",
     ]
     assert {row["phase"] for row in rows.values()} == {"restore"}
+
+
+def test_restore_scan_rejects_explicit_phase(tmp_path: Path) -> None:
+    source = tmp_path / "rescued-user-data"
+    write_file(source / "Desktop" / "faktura.txt", b"desktop")
+    job_dir = tmp_path / "restore-job"
+    run_cli(
+        "init", "--job-dir", str(job_dir), "--source", str(source),
+        "--dest", str(tmp_path / "new-home"), "--profile", "restore",
+    )
+
+    for phase in ("visible-home", "restore"):
+        result = run_cli("scan", "--job-dir", str(job_dir), "--phase", phase, check=False)
+
+        assert result.returncode == 1
+        assert "restore profile scans the whole rescued tree" in result.stderr
+
+
+def test_customer_scan_rejects_restore_phase(tmp_path: Path) -> None:
+    source = tmp_path / "source-home"
+    write_file(source / "Desktop" / "invoice.txt", b"desktop")
+    job_dir = tmp_path / "job"
+    run_cli(
+        "init", "--job-dir", str(job_dir), "--source", str(source),
+        "--dest", str(tmp_path / "dest"),
+    )
+
+    result = run_cli("scan", "--job-dir", str(job_dir), "--phase", "restore", check=False)
+
+    assert result.returncode == 1
+    assert "restore requires a restore profile job" in result.stderr

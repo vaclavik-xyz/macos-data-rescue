@@ -147,7 +147,7 @@ def scan_job(
 
 def resolve_scan_phase(profile: str, phase: str) -> str:
     if profile == "restore":
-        if phase not in {"all", "restore"}:
+        if phase != "all":
             raise RescueError("restore profile scans the whole rescued tree; omit --phase")
         return "restore"
     if profile != "customer-home":

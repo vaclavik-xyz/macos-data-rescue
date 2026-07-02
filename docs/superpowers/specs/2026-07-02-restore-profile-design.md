@@ -39,9 +39,11 @@ original rescue manifest (rejected as YAGNI), no runbook-only variant
   - `--profile` choices become `("customer-home", "restore")`.
   - All existing init guards stay (source must exist, job-dir/dest must not
     be inside source, inode-based containment check).
-- `scan --job-dir JOB` on a restore job scans the whole source tree. An
-  explicit `--phase` other than the default `all` is a `RescueError`; the
-  restore profile has exactly one scope.
+- `scan --job-dir JOB` on a restore job scans the whole source tree. Any
+  explicit `--phase` other than the default `all` — including
+  `--phase restore` — is a `RescueError`; the restore profile has exactly
+  one scan scope. (`--phase restore` remains meaningful for `copy`/`resume`,
+  where it selects the restore rows.)
 - Manifest rows are stored with `phase = "restore"`. `"restore"` is added to
   the CLI `PHASES` choices so `copy`/`resume --phase restore` select exactly
   those rows; the default `--phase all` also matches.
@@ -82,6 +84,11 @@ non-regular-kind skip applies as in rescue.
 
 ## Out of scope
 
+- Empty directories: they are not recorded or recreated, matching the
+  tool-wide MVP limitation. A rescued tree produced by this tool contains
+  none (copy only creates parents of copied files); hand-added empty
+  directories on the service disk are not restored, and the restore README
+  section says so.
 - Mapping applications back to `/Applications`.
 - Ownership handling inside the tool (`--owner`).
 - Restore-specific report wording.
