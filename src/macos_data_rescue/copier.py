@@ -11,7 +11,17 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .manifest import connect, iter_selected_files, load_config, mark_copying, mark_result, migrate_manifest
+from .errors import RescueError
+from .manifest import (
+    approval_required_message,
+    connect,
+    iter_selected_files,
+    load_config,
+    mark_copying,
+    mark_result,
+    migrate_manifest,
+    unapproved_gated_phases,
+)
 
 
 CHUNK_SIZE = 1024 * 1024
@@ -43,6 +53,10 @@ class CopySummary:
 
 def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = None) -> CopySummary:
     config = load_config(job_dir)
+    if config.profile == "customer-home":
+        blocked = unapproved_gated_phases(job_dir, phase)
+        if blocked:
+            raise RescueError(approval_required_message(job_dir, blocked))
     migrate_manifest(job_dir)
     cleanup_stale_temps(job_dir, phase, config.dest)
     summary = CopySummary()

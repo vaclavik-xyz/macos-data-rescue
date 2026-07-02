@@ -9,8 +9,11 @@ from pathlib import Path
 
 from .errors import RescueError
 from .manifest import (
+    GATED_PHASES,
     ScannedFile,
+    approval_required_message,
     clear_scan_cursor,
+    load_approval,
     load_config,
     load_scan_cursor,
     mark_scan_complete,
@@ -122,6 +125,9 @@ def scan_job(
 ) -> ScanSummary:
     config = load_config(job_dir)
     scan_phase = resolve_scan_phase(config.profile, phase)
+    if config.profile == "customer-home" and scan_phase in GATED_PHASES:
+        if load_approval(job_dir, scan_phase) is None:
+            raise RescueError(approval_required_message(job_dir, [scan_phase]))
     if not config.source.exists():
         raise RescueError(f"source does not exist: {config.source}")
     migrate_manifest(job_dir)

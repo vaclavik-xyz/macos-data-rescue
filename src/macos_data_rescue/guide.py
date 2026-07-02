@@ -3,11 +3,19 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 
-from .manifest import JobConfig, connect, load_config, load_scan_cursor, load_scan_done, manifest_path
+from .manifest import (
+    GATED_PHASES,
+    JobConfig,
+    connect,
+    load_approval,
+    load_config,
+    load_scan_cursor,
+    load_scan_done,
+    manifest_path,
+)
 
 
 CORE_PHASES = ("visible-home", "hidden-home")
-GATED_PHASES = ("app-data", "applications", "full-home")
 LEGACY_PHASES = {"important", "photos", "library", "all"}
 SCAN_TIMEOUT = "300"
 COPY_TIMEOUT = "3600"
@@ -80,6 +88,12 @@ def customer_lines(job_dir: Path, config: JobConfig, stats: dict[str, dict[str, 
             return action_lines(job_dir, action="scan", phase=phase, reason="resume-interrupted-scan")
         if phase in CORE_PHASES and not full_home_active and not phase_touched(job_dir, stats, phase):
             return action_lines(job_dir, action="scan", phase=phase, reason="unscanned")
+        if (
+            phase in GATED_PHASES
+            and not phase_touched(job_dir, stats, phase)
+            and load_approval(job_dir, phase) is not None
+        ):
+            return action_lines(job_dir, action="scan", phase=phase, reason="approved-unscanned")
     return terminal_lines(job_dir, config, stats)
 
 
@@ -140,14 +154,17 @@ def action_lines(
 
 def terminal_lines(job_dir: Path, config: JobConfig, stats: dict[str, dict[str, int]]) -> list[str]:
     lines = ["state: core-phases-complete"]
-    gates = [phase for phase in GATED_PHASES if not phase_touched(job_dir, stats, phase)]
+    gates = [
+        phase
+        for phase in GATED_PHASES
+        if not phase_touched(job_dir, stats, phase) and load_approval(job_dir, phase) is None
+    ]
     if gates:
         lines.append("ask-before: " + " ".join(gates))
-        lines.append("run (only after operator/customer approval):")
+        lines.append("ask the operator/customer, record the decision, then run next again:")
         for phase in gates:
-            lines.append(
-                f"  {base_cmd('scan', '--job-dir', quoted(job_dir), '--phase', phase, '--timeout', SCAN_TIMEOUT)}"
-            )
+            lines.append(f"  {base_cmd('approve', '--job-dir', quoted(job_dir), '--phase', phase)}")
+        lines.append("scan refuses these phases until the approval is recorded")
     report_cmds = missing_report_cmds(job_dir, config)
     if report_cmds:
         lines.append("reports (missing):")

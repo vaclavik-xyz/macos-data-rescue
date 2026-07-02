@@ -267,6 +267,7 @@ def test_manifest_migration_adds_source_path_for_application_rows(tmp_path: Path
     assert "source_path" in columns
     assert row["source_path"] == str(app_file)
 
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "applications")
     run_cli("copy", "--job-dir", str(job_dir), "--phase", "applications", "--timeout", "2")
 
     assert (dest_dir / "Volume Applications" / "Legacy.app" / "Contents" / "Info.plist").read_bytes() == b"volume app"

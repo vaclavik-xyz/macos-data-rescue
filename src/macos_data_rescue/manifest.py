@@ -12,6 +12,7 @@ from .errors import RescueError
 
 MANIFEST_NAME = "manifest.sqlite"
 WARNING_UNCHANGED = object()
+GATED_PHASES = ("app-data", "applications", "full-home")
 
 
 @dataclass(frozen=True)
@@ -264,6 +265,64 @@ def clear_scan_cursor(job_dir: Path, phase: str) -> None:
         commit_scan_batch(conn)
     finally:
         conn.close()
+
+
+def approval_key(phase: str) -> str:
+    return f"approved:{phase}"
+
+
+def load_approval(job_dir: Path, phase: str) -> str | None:
+    conn = connect(job_dir)
+    try:
+        row = conn.execute(
+            "select value from config where key = ?",
+            (approval_key(phase),),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row["value"] if row else None
+
+
+def record_approval(job_dir: Path, phase: str, by: str | None = None) -> str:
+    value = utc_now()
+    if by:
+        value += f" by={by}"
+    conn = connect(job_dir)
+    try:
+        conn.execute(
+            """
+            insert into config(key, value) values(?, ?)
+            on conflict(key) do update set value = excluded.value
+            """,
+            (approval_key(phase), value),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return value
+
+
+def unapproved_gated_phases(job_dir: Path, phase: str) -> list[str]:
+    if phase in GATED_PHASES:
+        candidates = [phase]
+    elif phase == "all":
+        conn = connect(job_dir)
+        try:
+            rows = conn.execute("select distinct phase from files").fetchall()
+        finally:
+            conn.close()
+        present = {row["phase"] for row in rows}
+        candidates = [gated for gated in GATED_PHASES if gated in present]
+    else:
+        return []
+    return [gated for gated in candidates if load_approval(job_dir, gated) is None]
+
+
+def approval_required_message(job_dir: Path, phases: list[str]) -> str:
+    commands = "; ".join(
+        f"macos-data-rescue approve --job-dir {job_dir} --phase {phase}" for phase in phases
+    )
+    return f"approval required for phase {', '.join(phases)}; run: {commands}"
 
 
 def scan_done_key(phase: str) -> str:

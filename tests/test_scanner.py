@@ -344,6 +344,7 @@ def test_scan_phase_app_data_records_curated_library_without_cache_ballast(tmp_p
     dest_dir = tmp_path / "dest"
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
 
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "app-data")
     run_cli("scan", "--job-dir", str(job_dir), "--phase", "app-data")
 
     rows = file_rows(job_dir)
@@ -367,6 +368,7 @@ def test_scan_phase_app_data_does_not_follow_symlinked_library_root(tmp_path: Pa
     dest_dir = tmp_path / "dest"
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
 
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "app-data")
     run_cli("scan", "--job-dir", str(job_dir), "--phase", "app-data")
     run_cli("copy", "--job-dir", str(job_dir), "--phase", "app-data", "--timeout", "2")
 
@@ -392,6 +394,7 @@ def test_scan_phase_full_home_records_visible_hidden_and_library_with_full_home_
     dest_dir = tmp_path / "dest"
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
 
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "full-home")
     run_cli("scan", "--job-dir", str(job_dir), "--phase", "full-home")
 
     rows = file_rows(job_dir)
@@ -430,6 +433,7 @@ def test_scan_and_copy_applications_reads_volume_applications_outside_home(tmp_p
     dest_dir = tmp_path / "dest"
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
 
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "applications")
     run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
     run_cli("copy", "--job-dir", str(job_dir), "--phase", "applications", "--timeout", "2")
 
@@ -455,6 +459,7 @@ def test_scan_phase_applications_does_not_follow_symlinked_application_roots(tmp
     dest_dir = tmp_path / "dest"
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
 
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "applications")
     run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
     run_cli("copy", "--job-dir", str(job_dir), "--phase", "applications", "--timeout", "2")
 
@@ -479,6 +484,7 @@ def test_scan_phase_applications_uses_last_users_segment_for_volume_root(tmp_pat
     dest_dir = tmp_path / "dest"
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
 
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "applications")
     run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
 
     rows = file_rows(job_dir)
@@ -494,6 +500,7 @@ def test_applications_json_report_includes_source_path(tmp_path: Path) -> None:
     job_dir = tmp_path / "job"
     dest_dir = tmp_path / "dest"
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "applications")
     run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
 
     payload = json.loads(run_cli("report", "--job-dir", str(job_dir), "--format", "json").stdout)
@@ -513,6 +520,7 @@ def test_scan_and_copy_applications_preserves_bundle_directories_named_cache(tmp
     dest_dir = tmp_path / "dest"
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
 
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "applications")
     run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
     run_cli("copy", "--job-dir", str(job_dir), "--phase", "applications", "--timeout", "2")
 
@@ -570,6 +578,7 @@ def test_scan_applications_records_bundle_directory_symlinks(tmp_path: Path) -> 
     dest_dir = tmp_path / "dest"
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
 
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "applications")
     run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
     run_cli("copy", "--job-dir", str(job_dir), "--phase", "applications", "--timeout", "2")
 
@@ -650,6 +659,7 @@ def test_scan_app_data_records_symlinked_intermediate_library_dir(tmp_path: Path
     dest_dir = tmp_path / "dest"
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
 
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "app-data")
     run_cli("scan", "--job-dir", str(job_dir), "--phase", "app-data")
     run_cli("copy", "--job-dir", str(job_dir), "--phase", "app-data", "--timeout", "2")
 

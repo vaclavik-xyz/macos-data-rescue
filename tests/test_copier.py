@@ -44,6 +44,7 @@ def test_copy_rejects_manifest_source_path_outside_application_roots(tmp_path: P
     job_dir = tmp_path / "job"
     dest_dir = tmp_path / "dest"
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "applications")
     run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
     conn = sqlite3.connect(job_dir / "manifest.sqlite")
     try:
@@ -73,6 +74,7 @@ def test_copy_rejects_manifest_source_path_under_symlinked_user_applications(tmp
     job_dir = tmp_path / "job"
     dest_dir = tmp_path / "dest"
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "applications")
     run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
     conn = sqlite3.connect(job_dir / "manifest.sqlite")
     try:
@@ -100,6 +102,7 @@ def test_copy_rejects_manifest_relative_path_outside_destination(tmp_path: Path)
     job_dir = tmp_path / "job"
     dest_dir = tmp_path / "dest"
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "applications")
     run_cli("scan", "--job-dir", str(job_dir), "--phase", "applications")
     conn = sqlite3.connect(job_dir / "manifest.sqlite")
     try:

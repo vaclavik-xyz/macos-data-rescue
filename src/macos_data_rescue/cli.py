@@ -8,7 +8,7 @@ from pathlib import Path
 from .copier import copy_job
 from .errors import RescueError
 from .guide import next_text
-from .manifest import init_manifest
+from .manifest import GATED_PHASES, init_manifest, record_approval
 from .preflight import preflight_job
 from .reporting import CUSTOMER_REPORT_LANGUAGES, report, status_text, write_customer_report
 from .scanner import scan_job
@@ -66,6 +66,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     next_parser = subparsers.add_parser("next", help="Print the next recommended command for a job.")
     next_parser.add_argument("--job-dir", required=True, type=Path)
+
+    approve_parser = subparsers.add_parser(
+        "approve",
+        help="Record operator/customer approval for a gated phase.",
+    )
+    approve_parser.add_argument("--job-dir", required=True, type=Path)
+    approve_parser.add_argument("--phase", required=True, choices=GATED_PHASES)
+    approve_parser.add_argument("--by")
 
     report_parser = subparsers.add_parser("report", help="Print a rescue report.")
     report_parser.add_argument("--job-dir", required=True, type=Path)
@@ -132,6 +140,9 @@ def main(argv: list[str] | None = None) -> int:
             print(status_text(args.job_dir))
         elif args.command == "next":
             print(next_text(args.job_dir))
+        elif args.command == "approve":
+            value = record_approval(args.job_dir, args.phase, args.by)
+            print(f"approved phase={args.phase} at={value}")
         elif args.command == "report":
             sys.stdout.write(report(args.job_dir, args.format))
         elif args.command == "customer-report":

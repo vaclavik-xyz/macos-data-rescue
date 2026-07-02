@@ -77,9 +77,25 @@ def test_next_after_core_phases_lists_gates_and_missing_reports(tmp_path: Path) 
 
     assert "core-phases-complete" in result.stdout
     assert "ask-before: app-data applications full-home" in result.stdout
-    assert "only after operator/customer approval" in result.stdout
+    assert "record the decision" in result.stdout
+    assert f"approve --job-dir {job_dir} --phase app-data" in result.stdout
+    assert "scan refuses these phases" in result.stdout
+    assert f"scan --job-dir {job_dir} --phase app-data" not in result.stdout
     assert "customer-report" in result.stdout
     assert "report --job-dir" in result.stdout
+
+
+def test_next_drives_approved_gate_automatically(tmp_path: Path) -> None:
+    job_dir, _, _ = init_customer_job(tmp_path)
+    for phase in ("visible-home", "hidden-home"):
+        run_cli("scan", "--job-dir", str(job_dir), "--phase", phase)
+        run_cli("copy", "--job-dir", str(job_dir), "--phase", phase, "--timeout", "5")
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "app-data")
+
+    result = run_cli("next", "--job-dir", str(job_dir))
+
+    assert "action=scan phase=app-data reason=approved-unscanned" in result.stdout
+    assert f"scan --job-dir {job_dir} --phase app-data --timeout 300" in result.stdout
 
 
 def test_next_moves_past_phase_that_scanned_zero_files(tmp_path: Path) -> None:
@@ -174,6 +190,7 @@ def test_next_notes_legacy_only_manifest(tmp_path: Path) -> None:
 
 def test_next_does_not_resuggest_core_phases_after_full_home(tmp_path: Path) -> None:
     job_dir, _, _ = init_customer_job(tmp_path)
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "full-home")
     run_cli("scan", "--job-dir", str(job_dir), "--phase", "full-home")
 
     result = run_cli("next", "--job-dir", str(job_dir))
