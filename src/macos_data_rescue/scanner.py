@@ -133,8 +133,8 @@ def scan_job(
         # so it needs the library approval like the explicit library phase
         if load_approval(job_dir, "library") is None:
             raise RescueError(
-                approval_required_message(job_dir, ["library"])
-                + " (the default scan includes ~/Library)"
+                "the default scan includes ~/Library; "
+                + approval_required_message(job_dir, ["library"])
             )
     if not config.source.exists():
         raise RescueError(f"source does not exist: {config.source}")

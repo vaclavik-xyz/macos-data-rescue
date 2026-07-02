@@ -80,11 +80,13 @@ uv run macos-data-rescue next --job-dir "$JOB"
 
 and execute exactly what it prints. `next` applies copy-first ordering
 (committed rows are rescued before more scanning), resumes interrupted
-scans, and stops retrying files whose failures are exhausted. Commands
-listed under `ask-before:` / "run (only after operator/customer approval)"
-still require explicit approval from the operator or customer — never run
-them on your own. `next` works for both rescue and restore jobs; the manual
-sequence below documents what it will walk you through.
+scans, and stops retrying files whose failures are exhausted. Phases listed
+under `ask-before:` are enforced, not advisory: `scan`/`copy` refuse them
+until the operator/customer decision is recorded with
+`approve --job-dir "$JOB" --phase <phase> --by "name"`. Ask the customer,
+record the decision, and only then continue — never approve on your own.
+`next` works for both rescue and restore jobs; the manual sequence below
+documents what it will walk you through.
 
 ## Command Sequence
 
@@ -125,9 +127,12 @@ uv run macos-data-rescue scan --job-dir "$JOB" --phase hidden-home --timeout 300
 uv run macos-data-rescue copy --job-dir "$JOB" --phase hidden-home --timeout 3600
 ```
 
+The phases below are gated: `scan` (and `copy`/`resume` selections that include their rows) refuse to run until the operator/customer decision is recorded with `approve`. Ask first, then record who approved:
+
 Run `app-data` only after explicit approval:
 
 ```bash
+uv run macos-data-rescue approve --job-dir "$JOB" --phase app-data --by "customer name"
 uv run macos-data-rescue scan --job-dir "$JOB" --phase app-data --timeout 300
 uv run macos-data-rescue copy --job-dir "$JOB" --phase app-data --timeout 3600
 ```
@@ -135,6 +140,7 @@ uv run macos-data-rescue copy --job-dir "$JOB" --phase app-data --timeout 3600
 Run `applications` only after explicit approval:
 
 ```bash
+uv run macos-data-rescue approve --job-dir "$JOB" --phase applications --by "customer name"
 uv run macos-data-rescue scan --job-dir "$JOB" --phase applications --timeout 300
 uv run macos-data-rescue copy --job-dir "$JOB" --phase applications --timeout 3600
 ```
@@ -142,19 +148,21 @@ uv run macos-data-rescue copy --job-dir "$JOB" --phase applications --timeout 36
 Run `full-home` only after focused recovery, if maximum practical coverage is requested and space/time allow:
 
 ```bash
+uv run macos-data-rescue approve --job-dir "$JOB" --phase full-home --by "customer name"
 uv run macos-data-rescue scan --job-dir "$JOB" --phase full-home --timeout 300
 uv run macos-data-rescue resume --job-dir "$JOB" --phase all --timeout 3600
 ```
 
 If the `applications` phase also ran, user applications from `~/Applications` end up twice under `DST` (`Home Applications/` from the applications phase and `Applications/` from full-home). This overlap is expected; account for it when estimating destination space.
 
-Legacy phase names remain supported for older jobs and scripts:
+Legacy phase names remain supported for older jobs and scripts. `important` and `photos` are ungated; `library` and the default no-`--phase` scan reach `~/Library` and therefore require the `library` approval first:
 
 ```bash
 uv run macos-data-rescue scan --job-dir "$JOB" --phase important --timeout 300
 uv run macos-data-rescue copy --job-dir "$JOB" --phase important --timeout 3600
 uv run macos-data-rescue scan --job-dir "$JOB" --phase photos --timeout 300
 uv run macos-data-rescue copy --job-dir "$JOB" --phase photos --timeout 3600
+uv run macos-data-rescue approve --job-dir "$JOB" --phase library --by "customer name"
 uv run macos-data-rescue scan --job-dir "$JOB" --phase library --timeout 300
 uv run macos-data-rescue copy --job-dir "$JOB" --phase library --timeout 3600
 ```
