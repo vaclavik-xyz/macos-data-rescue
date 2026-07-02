@@ -288,3 +288,28 @@ def test_next_requires_approval_before_driving_legacy_gated_rows(tmp_path: Path)
     assert f"approve --job-dir {job_dir} --phase app-data" in blocked.stdout
     assert f"copy --job-dir {job_dir} --phase app-data" not in blocked.stdout
     assert "action=copy phase=app-data" in unblocked.stdout
+
+
+def test_next_requires_approval_before_resuming_legacy_gated_cursor(tmp_path: Path) -> None:
+    job_dir, _, _ = init_customer_job(tmp_path)
+    for phase in ("visible-home", "hidden-home"):
+        run_cli("scan", "--job-dir", str(job_dir), "--phase", phase)
+        run_cli("copy", "--job-dir", str(job_dir), "--phase", phase, "--timeout", "5")
+    # simulate an interrupted gated scan from an older version: cursor only
+    conn = sqlite3.connect(job_dir / "manifest.sqlite")
+    try:
+        conn.execute(
+            "insert into config(key, value) values('scan_cursor:app-data', 'Library/Mail/V10/mailbox')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    blocked = run_cli("next", "--job-dir", str(job_dir))
+    run_cli("approve", "--job-dir", str(job_dir), "--phase", "app-data")
+    unblocked = run_cli("next", "--job-dir", str(job_dir))
+
+    assert "state: approval-required phase=app-data" in blocked.stdout
+    assert f"approve --job-dir {job_dir} --phase app-data" in blocked.stdout
+    assert f"scan --job-dir {job_dir} --phase app-data" not in blocked.stdout
+    assert "action=scan phase=app-data reason=resume-interrupted-scan" in unblocked.stdout

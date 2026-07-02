@@ -90,8 +90,9 @@ def customer_lines(job_dir: Path, config: JobConfig, stats: dict[str, dict[str, 
             # reject the copy/scan command; the approval must come first
             return [
                 f"state: approval-required phase={phase}",
-                "this job already contains rows for a gated phase without a recorded approval;",
-                "confirm the original customer consent and record it, then run next again:",
+                "this job already contains rows or an interrupted scan cursor for a gated",
+                "phase without a recorded approval; confirm the original customer consent",
+                "and record it, then run next again:",
                 f"  {base_cmd('approve', '--job-dir', quoted(job_dir), '--phase', phase)}",
             ]
         if actionable:
