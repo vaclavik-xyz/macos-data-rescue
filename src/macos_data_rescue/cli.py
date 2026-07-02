@@ -8,6 +8,7 @@ from pathlib import Path
 from .copier import copy_job
 from .errors import RescueError
 from .manifest import init_manifest
+from .preflight import preflight_job
 from .reporting import CUSTOMER_REPORT_LANGUAGES, report, status_text, write_customer_report
 from .scanner import scan_job
 
@@ -38,6 +39,14 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--source", required=True, type=Path)
     init_parser.add_argument("--dest", required=True, type=Path)
     init_parser.add_argument("--profile", default="customer-home", choices=("customer-home", "restore"))
+
+    preflight_parser = subparsers.add_parser(
+        "preflight",
+        help="Check the environment before init or before continuing a job.",
+    )
+    preflight_parser.add_argument("--job-dir", required=True, type=Path)
+    preflight_parser.add_argument("--source", type=Path)
+    preflight_parser.add_argument("--dest", type=Path)
 
     scan_parser = subparsers.add_parser("scan", help="Scan source files into the manifest.")
     scan_parser.add_argument("--job-dir", required=True, type=Path)
@@ -98,6 +107,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "init":
             config = init_manifest(args.job_dir, args.source, args.dest, args.profile)
             print(f"initialized job={config.job_dir} source={config.source} dest={config.dest}")
+        elif args.command == "preflight":
+            summary = preflight_job(args.job_dir, args.source, args.dest)
+            for line in summary.as_lines():
+                print(line)
+            if summary.failed:
+                return 1
         elif args.command == "scan":
             summary = scan_job(args.job_dir, phase=args.phase, limit=args.limit, timeout=args.timeout)
             print(summary.as_line())
