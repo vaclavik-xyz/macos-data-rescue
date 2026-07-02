@@ -119,33 +119,44 @@ def scan_job(
     timeout: float | None = None,
     batch_size: int = DEFAULT_SCAN_BATCH_SIZE,
 ) -> ScanSummary:
-    if phase not in SCAN_PHASES:
-        raise RescueError(f"unsupported scan phase: {phase}")
     config = load_config(job_dir)
-    if config.profile != "customer-home":
-        raise RescueError(f"unsupported profile: {config.profile}")
+    scan_phase = resolve_scan_phase(config.profile, phase)
     if not config.source.exists():
         raise RescueError(f"source does not exist: {config.source}")
     migrate_manifest(job_dir)
     limiter = ScanLimiter(limit=limit, timeout=timeout)
-    cursor = load_scan_cursor(job_dir, phase)
+    cursor = load_scan_cursor(job_dir, scan_phase)
     count = upsert_scanned_files(
         job_dir,
-        limiter.wrap(iter_source_files(config.source, phase=phase), skip_until_after=cursor),
+        limiter.wrap(iter_source_files(config.source, phase=scan_phase), skip_until_after=cursor),
         batch_size=batch_size,
-        cursor_key=scan_cursor_key(phase),
+        cursor_key=scan_cursor_key(scan_phase),
     )
     if cursor is not None and not limiter.found_cursor and limiter.stopped is None:
         limiter = ScanLimiter(limit=limit, deadline=limiter.deadline)
         count = upsert_scanned_files(
             job_dir,
-            limiter.wrap(iter_source_files(config.source, phase=phase)),
+            limiter.wrap(iter_source_files(config.source, phase=scan_phase)),
             batch_size=batch_size,
-            cursor_key=scan_cursor_key(phase),
+            cursor_key=scan_cursor_key(scan_phase),
         )
     if limiter.stopped is None:
-        clear_scan_cursor(job_dir, phase)
+        clear_scan_cursor(job_dir, scan_phase)
     return ScanSummary(scanned=count, stopped=limiter.stopped)
+
+
+def resolve_scan_phase(profile: str, phase: str) -> str:
+    if profile == "restore":
+        if phase not in {"all", "restore"}:
+            raise RescueError("restore profile scans the whole rescued tree; omit --phase")
+        return "restore"
+    if profile != "customer-home":
+        raise RescueError(f"unsupported profile: {profile}")
+    if phase == "restore":
+        raise RescueError("phase restore requires a restore profile job")
+    if phase not in SCAN_PHASES:
+        raise RescueError(f"unsupported scan phase: {phase}")
+    return phase
 
 
 class ScanLimiter:
@@ -210,7 +221,7 @@ def iter_source_files(source: Path, *, phase: str = "all"):
 
 
 def scan_roots(source: Path, phase: str) -> tuple[Path, ...]:
-    if phase in {"all", "visible-home", "hidden-home", "full-home"}:
+    if phase in {"all", "visible-home", "hidden-home", "full-home", "restore"}:
         return (source,)
     if phase == "app-data":
         library = source / "Library"
@@ -383,6 +394,8 @@ def is_excluded(parts: tuple[str, ...]) -> bool:
 
 
 def should_descend(parts: tuple[str, ...], phase: str) -> bool:
+    if phase == "restore":
+        return True
     if is_excluded(parts):
         return False
     if phase in CUSTOMER_PHASES and is_customer_home_ballast(parts):
@@ -399,6 +412,8 @@ def should_descend(parts: tuple[str, ...], phase: str) -> bool:
 
 
 def should_include_file(parts: tuple[str, ...], phase: str) -> bool:
+    if phase == "restore":
+        return True
     if is_excluded(parts):
         return False
     if phase in CUSTOMER_PHASES and is_customer_home_ballast(parts):
@@ -462,6 +477,8 @@ def is_real_directory(path: Path) -> bool:
 
 
 def manifest_phase_for(parts: tuple[str, ...], requested_phase: str) -> str:
+    if requested_phase == "restore":
+        return "restore"
     if requested_phase in CUSTOMER_PHASES:
         return requested_phase
     return phase_for(parts)

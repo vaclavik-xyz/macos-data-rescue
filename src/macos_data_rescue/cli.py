@@ -21,6 +21,7 @@ PHASES = (
     "important",
     "photos",
     "library",
+    "restore",
     "all",
 )
 

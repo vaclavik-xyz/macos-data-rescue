@@ -658,3 +658,33 @@ def test_scan_app_data_records_symlinked_intermediate_library_dir(tmp_path: Path
     assert rows["Library/MobileSync"]["kind"] == "symlink"
     assert rows["Library/MobileSync"]["status"] == "skipped"
     assert not (dest_dir / "Library" / "MobileSync").exists()
+
+
+def test_restore_scan_records_everything_without_excludes(tmp_path: Path) -> None:
+    source = tmp_path / "rescued-user-data"
+    write_file(source / "Desktop" / "faktura.txt", b"desktop")
+    write_file(source / "Projects" / "web" / "node_modules" / "pkg" / "index.js", b"js")
+    write_file(source / ".Trash" / "old.txt", b"trash")
+    write_file(source / "Cache" / "blob.bin", b"cache")
+    write_file(source / "Library" / "Caches" / "cache.bin", b"lib cache")
+    write_file(source / "Volume Applications" / "Legacy.app" / "Contents" / "Info.plist", b"app")
+    job_dir = tmp_path / "restore-job"
+    dest_dir = tmp_path / "new-home"
+    run_cli(
+        "init", "--job-dir", str(job_dir), "--source", str(source),
+        "--dest", str(dest_dir), "--profile", "restore",
+    )
+
+    result = run_cli("scan", "--job-dir", str(job_dir))
+
+    rows = file_rows(job_dir)
+    assert "scanned=6" in result.stdout
+    assert sorted(rows) == [
+        ".Trash/old.txt",
+        "Cache/blob.bin",
+        "Desktop/faktura.txt",
+        "Library/Caches/cache.bin",
+        "Projects/web/node_modules/pkg/index.js",
+        "Volume Applications/Legacy.app/Contents/Info.plist",
+    ]
+    assert {row["phase"] for row in rows.values()} == {"restore"}
