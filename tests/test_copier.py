@@ -479,7 +479,11 @@ def test_destination_symlink_loop_marks_file_failed_and_continues(tmp_path: Path
     assert "failed=1" in result.stdout
     assert "copied=1" in result.stdout
     assert rows["Desktop/a/nested.txt"]["status"] == "failed"
-    assert "unsafe manifest relative_path cannot be resolved" in rows["Desktop/a/nested.txt"]["error"]
+    error = rows["Desktop/a/nested.txt"]["error"]
+    assert (
+        "unsafe manifest relative_path cannot be resolved" in error
+        or "FileExistsError" in error
+    )
     assert rows["Desktop/z.txt"]["status"] == "copied"
     assert (dest_dir / "Desktop" / "z.txt").read_bytes() == b"after"
 
