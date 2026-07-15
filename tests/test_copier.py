@@ -3,7 +3,6 @@ import os
 import stat
 import sqlite3
 import subprocess
-import pytest
 
 from pathlib import Path
 from shutil import which

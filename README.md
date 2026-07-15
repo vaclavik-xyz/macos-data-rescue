@@ -1,6 +1,9 @@
 # macOS Data Rescue
 
-Private technician CLI for rescuing user data from damaged Macs mounted through Share Disk / Target Disk workflows.
+Open-source technician CLI for rescuing user data from damaged Macs mounted through Share Disk / Target Disk workflows.
+
+> [!CAUTION]
+> This is a practical file-rescue tool, not a forensic imager. Test your workflow first, keep the source read-only, and use `ddrescue` or a professional recovery service when the hardware is failing. The software is provided without warranty; see [LICENSE](LICENSE).
 
 The goal is simple: **one bad file must not stop the whole rescue**. The tool scans a mounted user home into a SQLite manifest, copies files one by one with per-file timeouts, records failures, and can be resumed safely.
 
@@ -27,11 +30,20 @@ The goal is simple: **one bad file must not stop the whole rescue**. The tool sc
 ## Install / run locally
 
 ```bash
+git clone https://github.com/vaclavik-xyz/macos-data-rescue.git
+cd macos-data-rescue
 uv sync
 uv run macos-data-rescue --help
 ```
 
-No runtime dependencies are used; `pytest` is only a dev dependency.
+After the repository is public, you can also install the CLI directly from GitHub:
+
+```bash
+uv tool install git+https://github.com/vaclavik-xyz/macos-data-rescue.git
+macos-data-rescue --help
+```
+
+The CLI has no runtime dependencies. Development and security-check tools are isolated to the dev dependency group.
 
 ## Typical service workflow
 
@@ -107,7 +119,7 @@ The same CLI handles the opposite direction: rescued data on the service disk ->
 ```bash
 JOB="/Volumes/RecoverySSD/Customer/.restore"
 SRC="/Volumes/RecoverySSD/Customer/user-data"
-DST="/Volumes/Novy Mac/Users/customer"
+DST="/Volumes/New Mac/Users/customer"
 
 uv run macos-data-rescue init --job-dir "$JOB" --source "$SRC" --dest "$DST" --profile restore
 uv run macos-data-rescue scan --job-dir "$JOB"
@@ -170,8 +182,18 @@ Default excludes include `.Trash`, `Library/Caches`, `Library/Logs`, `node_modul
 ## Development
 
 ```bash
+uv sync --locked
+uv run ruff check src tests
+uv run bandit -q -r src
 uv run pytest
+uv build
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before submitting changes. Never attach real customer manifests, reports, paths, filenames, or recovered data to an issue or test fixture. Report security problems privately as described in [SECURITY.md](SECURITY.md).
+
+## License
+
+MIT. See [LICENSE](LICENSE).
 
 Before committing: run tests, commit with Conventional Commits, then run:
 

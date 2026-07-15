@@ -68,9 +68,8 @@ def job_config_paths(job_dir: Path) -> tuple[Path, Path]:
 def manifest_pending_bytes(job_dir: Path) -> int:
     conn = connect(job_dir)
     try:
-        placeholders = ", ".join("?" for _ in WORK_STATUSES)
         row = conn.execute(
-            f"select coalesce(sum(size), 0) from files where status in ({placeholders})",
+            "select coalesce(sum(size), 0) from files where status in (?, ?, ?, ?)",
             WORK_STATUSES,
         ).fetchone()
     finally:
@@ -115,7 +114,7 @@ def run_checks(
         checks.append(source_mount_check(source))
 
     for name, candidate in (("job", job_resolved), ("dest", dest_resolved)):
-        if not containment_ok[f"job-dir" if name == "job" else "dest"]:
+        if not containment_ok["job-dir" if name == "job" else "dest"]:
             checks.append(
                 CheckResult("fail", f"{name}-writable", "skipped: containment check failed, refusing to probe")
             )

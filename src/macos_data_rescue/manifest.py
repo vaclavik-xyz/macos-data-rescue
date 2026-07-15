@@ -557,13 +557,9 @@ def fetch_selected_batch(
             params.append(last_path)
         where = f"where {' and '.join(where_parts)}" if where_parts else ""
         params.append(limit)
-        sql = f"""
-            select *
-            from files
-            {where}
-            order by relative_path
-            limit ?
-        """
+        # The interpolated fragment is assembled only from fixed SQL clauses;
+        # all manifest values remain bound parameters.
+        sql = "select * from files " + where + " order by relative_path limit ?"  # nosec B608
         return conn.execute(sql, params).fetchall()
     finally:
         conn.close()

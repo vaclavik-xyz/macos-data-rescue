@@ -434,7 +434,7 @@ disk -> the customer's new disk. A `restore` job mirrors the rescued tree
 ```bash
 JOB="/Volumes/RecoverySSD/Customer/.restore"
 SRC="/Volumes/RecoverySSD/Customer/user-data"
-DST="/Volumes/Novy Mac/Users/customer"
+DST="/Volumes/New Mac/Users/customer"
 
 uv run macos-data-rescue init --job-dir "$JOB" --source "$SRC" --dest "$DST" --profile restore
 uv run macos-data-rescue scan --job-dir "$JOB"
@@ -509,7 +509,7 @@ roborev wait && roborev show HEAD
 
 ```bash
 S=/tmp/restore-smoke; rm -rf "$S"; mkdir -p "$S/RecoverySSD/Customer/user-data/Desktop" "$S/NewMac/Users/customer"
-echo faktura > "$S/RecoverySSD/Customer/user-data/Desktop/faktura.txt"
+echo invoice > "$S/RecoverySSD/Customer/user-data/Desktop/invoice.txt"
 mkdir -p "$S/RecoverySSD/Customer/user-data/Volume Applications/Legacy.app/Contents"
 echo app > "$S/RecoverySSD/Customer/user-data/Volume Applications/Legacy.app/Contents/Info.plist"
 uv run macos-data-rescue init --job-dir "$S/RecoverySSD/Customer/.restore" --source "$S/RecoverySSD/Customer/user-data" --dest "$S/NewMac/Users/customer" --profile restore

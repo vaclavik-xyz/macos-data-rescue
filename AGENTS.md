@@ -1,7 +1,7 @@
 # Repository rules
 
 ## Project
-`macos-data-rescue` is a private macOS-focused CLI for service technicians rescuing user data from damaged Macs mounted via Share Disk/Target Disk.
+`macos-data-rescue` is an open-source macOS-focused CLI for service technicians rescuing user data from damaged Macs mounted via Share Disk/Target Disk.
 
 ## Language and style
 - Communicate with Filip in Czech; code, docs, CLI help, and commit messages in English.

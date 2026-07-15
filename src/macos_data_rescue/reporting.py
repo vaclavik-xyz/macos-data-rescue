@@ -6,6 +6,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 from .errors import RescueError
 from .manifest import all_files, load_config, migrate_manifest, status_summary
@@ -359,19 +360,16 @@ def markdown_report(job_dir: Path) -> str:
         "| Status | Count | Bytes |",
         "| --- | ---: | ---: |",
     ]
-    summary = payload["summary"]
-    assert isinstance(summary, dict)
+    summary = cast(dict[str, dict[str, int]], payload["summary"])
     for status in STATUSES:
         item = summary[status]
         lines.append(f"| {status} | {item['count']} | {item['bytes']} |")
     lines.extend(["", "## Important warnings", ""])
-    warnings = payload["warnings"]
-    assert isinstance(warnings, list)
+    warnings = cast(list[dict[str, str]], payload["warnings"])
     for warning in warnings:
         lines.append(f"- **{warning['title']}**: {warning['message']}")
     lines.extend(["", "## Files", ""])
-    files = payload["files"]
-    assert isinstance(files, list)
+    files = cast(list[dict[str, object]], payload["files"])
     if not files:
         lines.append("No files scanned.")
     for item in files:

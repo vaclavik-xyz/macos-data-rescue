@@ -1,9 +1,31 @@
 [project]
 name = "macos-data-rescue"
 version = "0.1.0"
-description = "Private macOS technician CLI for resumable user data rescue."
+description = "Resumable macOS data rescue CLI for mounted, damaged Macs."
+readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    { name = "Filip Vaclavik", email = "filip@vaclavik.xyz" },
+]
+keywords = ["macos", "data-recovery", "backup", "cli", "rescue"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Archiving :: Backup",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/vaclavik-xyz/macos-data-rescue"
+Documentation = "https://github.com/vaclavik-xyz/macos-data-rescue#readme"
+Issues = "https://github.com/vaclavik-xyz/macos-data-rescue/issues"
 
 [project.scripts]
 macos-data-rescue = "macos_data_rescue.cli:main"
@@ -14,7 +36,9 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "bandit>=1.9.4",
     "pytest>=8.0",
+    "ruff>=0.15.0",
 ]
 
 [tool.pytest.ini_options]

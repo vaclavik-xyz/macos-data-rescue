@@ -1,7 +1,7 @@
 # macOS Data Rescue MVP plan
 
 ## Goal
-Build a usable private MVP CLI for macOS service data rescue. It should copy a damaged/unstable mounted user home directory to a safe destination without one bad file stopping the whole job.
+Build a usable MVP CLI for macOS service data rescue. It should copy a damaged/unstable mounted user home directory to a safe destination without one bad file stopping the whole job.
 
 ## MVP commands
 
@@ -57,7 +57,7 @@ Default excludes: `.Trash`, `Library/Caches`, `Library/Logs`, common browser/app
 - customer-report writes an English or Czech customer-facing Markdown/PDF handoff report to the visible recovery root by default
 
 ## Done
-- Private GitHub repo exists.
+- GitHub repository exists.
 - CLI package is installable/runnable with `uv run macos-data-rescue`.
 - Tests pass.
 - Local smoke fixture demonstrates scan/copy/report.
