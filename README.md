@@ -1,6 +1,10 @@
-# macOS Data Rescue
+<p align="center">
+  <img src="assets/brand/macos-data-rescue-icon.svg" width="144" height="144" alt="macOS Data Rescue icon">
+</p>
 
-Open-source technician CLI for rescuing user data from damaged Macs mounted through Share Disk / Target Disk workflows.
+<h1 align="center">macOS Data Rescue</h1>
+
+<p align="center"><strong>Open-source technician CLI for rescuing user data from damaged Macs mounted through Share Disk / Target Disk workflows.</strong></p>
 
 > [!CAUTION]
 > This is a practical file-rescue tool, not a forensic imager. Test your workflow first, keep the source read-only, and use `ddrescue` or a professional recovery service when the hardware is failing. The software is provided without warranty; see [LICENSE](LICENSE).
