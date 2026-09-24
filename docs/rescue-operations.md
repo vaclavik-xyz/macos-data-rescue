@@ -59,3 +59,13 @@ Jobs with unresolved paths restart traversal so repaired files before the old
 cursor are not missed. Successful reinspection clears each corresponding issue;
 unvisited issues remain. Old partial cursors are reset once when upgrading the
 traversal engine, while copied statuses and digests remain intact.
+
+## Candidate discovery
+
+`find-duplicates --job-dir JOB --path FAILED_PATH [--limit 20] [--format json]`
+reads recorded manifest metadata only. Equal-size candidates are ranked by
+filename, extension, then previous copy success. Different content can have the
+same name and size. Results include an explicit `copy --path ... --fallback-from
+...` command, safely quoted for a shell; they never select or copy automatically.
+Only paths supported by the existing source-relative fallback command are shown.
+Candidates reflect scan-time metadata and may have changed or disappeared.

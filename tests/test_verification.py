@@ -87,3 +87,16 @@ def test_verify_restarts_worker_if_send_fails(monkeypatch, tmp_path):
     result = worker.verify_one(tmp_path, 'a', 1)
     assert result['status'] == 'failed' and len(calls) == 2
     worker.close()
+
+
+def test_resume_repairs_a_confirmed_digest_mismatch(tmp_path):
+    job, _, dest = copied_job(tmp_path)
+    target = dest / 'Documents/file.txt'
+    stamp = target.stat().st_mtime_ns
+    target.write_bytes(b'corrupt!')
+    os.utime(target, ns=(stamp, stamp))
+    assert verify_job(job).failed == 1
+    assert "destination integrity failed" in run_cli("next", "--job-dir", str(job)).stdout
+    assert 'copied=1' in run_cli('resume', '--job-dir', str(job)).stdout
+    assert target.read_bytes() == b'original'
+    assert verify_job(job).verified == 1

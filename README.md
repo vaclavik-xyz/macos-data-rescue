@@ -24,7 +24,10 @@ The goal is simple: **one bad file must not stop the whole rescue**. The tool sc
 - A file is marked `copied` only after the worker copies the expected byte count from the manifest.
 - macOS extended attributes and resource forks are copied best-effort with a native libSystem xattr backend.
 - `copy` / `resume` clean only job-registered stale temporary files whose device/inode still match. Unregistered older temporary files are retained for technician review.
-- `status` prints manifest counts.
+- `status` prints manifest counts; `--watch` adds current file, transferred bytes, speed, errors, and remaining known queue.
+- `verify` checks destination SHA256 against digests captured during copying, without rereading source files.
+- `find-duplicates` suggests metadata-matched alternatives for failed files; every fallback remains an explicit operator choice.
+- Storage loss or a full destination pauses copying (exit 3); reconnect/free space and `resume`.
 - `preflight` runs the environment checks from the runbook (source readable and not `/`, job/dest outside the source, mount read-only state, write probes, free space vs remaining manifest bytes) and exits non-zero on failure.
 - `next` inspects the manifest and prints the exact next recommended command, so the operator — human or agent — never has to track the workflow state machine; approval-gated phases are listed separately and are never auto-suggested as required.
 - `approve` records the operator/customer decision for a gated phase (`app-data`, `applications`, `full-home`, legacy `library`) with a timestamp and optional `--by` name. `scan` refuses gated phases until approved — including the legacy default no-`--phase` scan, which reaches `~/Library` — and `copy`/`resume` refuse selections containing unapproved gated rows (covers manifests from older versions).

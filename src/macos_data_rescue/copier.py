@@ -151,10 +151,12 @@ def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = N
         activity.finish("interrupted")
         raise
     finally:
-        if activity.data["state"] == "running":
-            activity.finish("paused" if summary.paused else "finished", summary.paused)
-        worker.close()
-        conn.close()
+        try:
+            if activity.data["state"] == "running":
+                activity.finish("paused" if summary.paused else "finished", summary.paused)
+        finally:
+            worker.close()
+            conn.close()
     return summary
 
 
@@ -365,6 +367,8 @@ def is_same_or_inside(candidate: Path, parent: Path) -> bool:
 
 
 def destination_matches(dest: Path, row: Any) -> bool:
+    if "verification_status" in row.keys() and row["verification_status"] == "failed":
+        return False
     try:
         info = dest.lstat()
         if not stat.S_ISREG(info.st_mode):

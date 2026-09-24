@@ -39,6 +39,17 @@ def next_text(job_dir: Path) -> str:
         return "\n".join(lines + [f"state: paused ({activity.get('reason')})",
                                   "Reconnect the original disks / free destination space, then run:",
                                   base_cmd("resume", "--job-dir", quoted(job_dir), "--phase", quoted(activity["phase"]))])
+    conn = connect(job_dir)
+    try:
+        columns = {row[1] for row in conn.execute("pragma table_info(files)")}
+        failed_integrity = (conn.execute("select phase from files where verification_status = 'failed' "
+                                         "and status in ('copied', 'copied_from_fallback') order by relative_path limit 1").fetchone()
+                            if "verification_status" in columns else None)
+    finally:
+        conn.close()
+    if failed_integrity:
+        return "\n".join(lines + ["state: destination integrity failed; reconnect the source, repeat copying, then verify again",
+                                  "run:", base_cmd("resume", "--job-dir", quoted(job_dir), "--phase", quoted(failed_integrity[0]))])
     issues = scan_issues(job_dir)
     if issues:
         lines.append(f"review: {len(issues)} unscanned path(s); coverage is incomplete. Inspect report and retry scan after fixing access.")

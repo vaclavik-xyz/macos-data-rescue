@@ -404,3 +404,25 @@ count. Resume retries the stored alternate after interruption or destination
 loss. When comparing a restore's rows to its source rescue, add `copied` and
 `copied_from_fallback` counts. Failed alternate attempts preserve provenance;
 a later rescan that detects a changed original resets the mapping.
+
+
+## Integrity, live progress, and duplicate candidates
+
+Before handoff, run a destination-only integrity check with a timeout appropriate
+for the largest recovered files. SHA256 is captured during each new copy; older
+copies without a baseline are reported as unverifiable. Do not reread a damaged
+source merely to create missing checksums.
+
+```bash
+uv run macos-data-rescue verify --job-dir "$JOB" --timeout 3600
+uv run macos-data-rescue status --job-dir "$JOB" --watch
+uv run macos-data-rescue find-duplicates --job-dir "$JOB" --path 'failed/file.heic'
+```
+
+A failed integrity check, unverifiable content, or unresolved `scan_issues` must
+be reviewed before handoff. Copy status and integrity status are separate: a
+previously copied file can later fail verification. Watch ETA is for the known
+queue only. Candidate metadata does not prove identical content; inspect the
+alternative and use the explicit command printed for the selected candidate.
+See [rescue operations](rescue-operations.md) for timeout, migration, and outage
+behavior.

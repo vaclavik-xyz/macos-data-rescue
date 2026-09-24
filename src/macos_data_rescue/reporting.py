@@ -433,7 +433,7 @@ def customer_markdown_report(job_dir: Path, text: CustomerReportText | None = No
     copying = summary["copying"]["count"]
     compressed = summary[UNREADABLE_COMPRESSED]["count"]
     fallback = summary["copied_from_fallback"]["count"]
-    unresolved = failed + timed_out + pending + copying + compressed + verification_counts(rows)["failed"] + len(scan_issues(job_dir))
+    unresolved = failed + timed_out + pending + copying + compressed + verification_counts(rows)["failed"] + verification_counts(rows)["unverifiable"] + len(scan_issues(job_dir))
     lines = [
         f"# {text.title}",
         "",
@@ -552,7 +552,7 @@ def customer_pdf_bytes(job_dir: Path, text: CustomerReportText | None = None) ->
     copying = summary["copying"]["count"]
     compressed = summary[UNREADABLE_COMPRESSED]["count"]
     fallback = summary["copied_from_fallback"]["count"]
-    unresolved = failed + timed_out + pending + copying + compressed + verification_counts(rows)["failed"] + len(scan_issues(job_dir))
+    unresolved = failed + timed_out + pending + copying + compressed + verification_counts(rows)["failed"] + verification_counts(rows)["unverifiable"] + len(scan_issues(job_dir))
     canvas = PdfCanvas()
     canvas.header(text.title, text.subtitle)
     canvas.status_card(

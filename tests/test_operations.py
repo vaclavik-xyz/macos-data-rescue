@@ -73,3 +73,42 @@ def test_progress_and_interrupted_watch_are_read_only(tmp_path):
         persisted = json.loads(conn.execute("select value from config where key = 'activity'").fetchone()[0])
     conn.close()
     assert persisted['state'] == 'running'
+
+
+def test_progress_messages_do_not_extend_worker_deadline():
+    import time
+    class ProgressConnection:
+        def poll(self, timeout):
+            return True
+        def recv(self):
+            return {'progress': 1}
+        def close(self):
+            pass
+    worker = copier.CopyWorker()
+    worker._conn = ProgressConnection()
+    started = time.monotonic()
+    assert worker._wait_result(0.02)['status'] == 'timed_out'
+    assert time.monotonic() - started < 1
+    worker.close()
+
+
+def test_disconnect_mid_copy_preserves_remaining_queue(tmp_path, monkeypatch):
+    job, source, dest = fixture(tmp_path)
+    original = copier.copy_one_with_timeout
+    disconnected = source.with_name('unplugged')
+    def disconnect(source_file, target, timeout, **kwargs):
+        if source_file.name == 'b':
+            source.rename(disconnected)
+            return dict(status='failed', error='device read failed')
+        return original(source_file, target, timeout, **kwargs)
+    monkeypatch.setattr(copier, 'copy_one_with_timeout', disconnect)
+    result = copier.copy_job(job, phase='all', timeout=2)
+    assert result.copied == 1 and result.paused
+    rows = file_rows(job)
+    assert rows['a']['status'] == 'copied'
+    assert rows['b']['status'] == rows['c']['status'] == 'pending'
+    assert rows['b']['attempts'] == rows['c']['attempts'] == 0
+    assert not (dest / 'c').exists()
+    disconnected.rename(source)
+    monkeypatch.setattr(copier, 'copy_one_with_timeout', original)
+    assert copier.copy_job(job, phase='all', timeout=2).copied == 2

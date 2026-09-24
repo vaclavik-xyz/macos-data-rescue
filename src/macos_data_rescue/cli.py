@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from .activity import watch_status
+from .candidates import candidates_text, duplicate_candidates
 from .copier import copy_job
 from .errors import RescueError
 from .guide import next_text
@@ -79,6 +80,12 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser.add_argument("--watch", action="store_true", help="Refresh progress until Ctrl-C.")
     status_parser.add_argument("--interval", default=1.0, type=positive_float)
     status_parser.add_argument("--count", type=positive_int, help="Stop watch after N snapshots.")
+
+    candidates_parser = subparsers.add_parser("find-duplicates", help="Suggest metadata-matched alternatives for a failed file.")
+    candidates_parser.add_argument("--job-dir", required=True, type=Path)
+    candidates_parser.add_argument("--path", required=True)
+    candidates_parser.add_argument("--limit", default=20, type=positive_int)
+    candidates_parser.add_argument("--format", default="text", choices=("text", "json"))
 
     next_parser = subparsers.add_parser("next", help="Print the next recommended command for a job.")
     next_parser.add_argument("--job-dir", required=True, type=Path)
@@ -170,6 +177,9 @@ def main(argv: list[str] | None = None) -> int:
                 watch_status(args.job_dir, interval=args.interval, count=args.count)
             else:
                 print(status_text(args.job_dir))
+        elif args.command == "find-duplicates":
+            payload = duplicate_candidates(args.job_dir, args.path, limit=args.limit)
+            sys.stdout.write(candidates_text(payload, args.format))
         elif args.command == "next":
             print(next_text(args.job_dir))
         elif args.command == "approve":
