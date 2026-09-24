@@ -609,7 +609,7 @@ def test_copy_cleans_stale_internal_temp_without_removing_manifest_file(tmp_path
 
     run_cli("copy", "--job-dir", str(job_dir), "--phase", "important", "--timeout", "2")
 
-    assert not orphan_temp.exists()
+    assert orphan_temp.read_text() == "orphan"
     assert (dest_dir / "Desktop" / ".foo.rescue-tmp").read_bytes() == b"real hidden file"
     assert (dest_dir / "Desktop" / "foo").read_bytes() == b"main file"
 

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import RescueError
-from .manifest import connect, is_same_or_inside, manifest_path
+from .manifest import connect, is_same_or_inside, manifest_path, validate_path_layout
 from .reporting import format_size
 
 
@@ -109,6 +109,12 @@ def run_checks(
             checks.append(CheckResult("fail", f"{name}-outside-source", f"{candidate} is the source or inside it"))
         else:
             checks.append(CheckResult("ok", f"{name}-outside-source", str(candidate)))
+
+    try:
+        validate_path_layout(source_resolved, dest_resolved, job_resolved)
+    except RescueError as exc:
+        checks.append(CheckResult("fail", "path-layout", str(exc)))
+        containment_ok = {key: False for key in containment_ok}
 
     if source_is_dir:
         checks.append(source_mount_check(source))

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import cast
 
 from .errors import RescueError
-from .manifest import all_files, load_config, migrate_manifest, status_summary
+from .manifest import all_files, is_same_or_inside, load_config, migrate_manifest, status_summary
 
 
 STATUSES = ("pending", "copying", "copied", "failed", "timed_out", "skipped")
@@ -108,7 +108,7 @@ CUSTOMER_REPORT_TEXT = {
         summary="Summary",
         recovery_source="Recovery source",
         recovery_destination="Recovery destination",
-        complete_sentence="The recovery completed with no failed or timed-out files recorded by the rescue tool.",
+        complete_sentence="All recorded files have been processed. This does not certify complete source coverage.",
         unresolved_sentence="The recovery completed with unresolved files recorded by the rescue tool.",
         result="Result",
         count="Count",
@@ -161,7 +161,7 @@ CUSTOMER_REPORT_TEXT = {
         practical_note="This is a practical file-level recovery copy, not a forensic disk image.",
         detailed_reports="Detailed Reports",
         detailed_reports_intro="Detailed technician reports can be generated with:",
-        status_complete_title="Recovery complete",
+        status_complete_title="Recorded files processed",
         status_unresolved_title="Recovery has unresolved files",
         status_complete_body="No failed, timed-out, pending, or interrupted files are recorded.",
         status_unresolved_body="Some files need technician review. See the detailed report for exact paths.",
@@ -179,7 +179,7 @@ CUSTOMER_REPORT_TEXT = {
         summary="Souhrn",
         recovery_source="Zdroj obnovy",
         recovery_destination="Cíl obnovy",
-        complete_sentence="Záchrana byla dokončena; nástroj neeviduje žádné neúspěšné soubory ani soubory po timeoutu.",
+        complete_sentence="Všechny evidované soubory byly zpracovány. To nepotvrzuje úplnost prohledání zdroje.",
         unresolved_sentence="Záchrana obsahuje nedořešené soubory evidované nástrojem.",
         result="Výsledek",
         count="Počet",
@@ -233,7 +233,7 @@ CUSTOMER_REPORT_TEXT = {
         practical_note="Toto je praktická souborová záchrana dat, ne forenzní obraz disku.",
         detailed_reports="Detailní reporty",
         detailed_reports_intro="Detailní technické reporty lze vygenerovat příkazy:",
-        status_complete_title="Záchrana dokončena",
+        status_complete_title="Evidované soubory zpracovány",
         status_unresolved_title="Záchrana má nedořešené soubory",
         status_complete_body="Nejsou evidované žádné neúspěšné, timeoutované, čekající ani přerušené soubory.",
         status_unresolved_body="Některé soubory vyžadují kontrolu technikem. Přesné cesty jsou v detailním reportu.",
@@ -310,7 +310,7 @@ def write_customer_report(
         stem = "recovery-report" if language == "en" else f"recovery-report-{language}"
         output_path = config.dest.parent / f"{stem}.{suffix}"
     output_path = output_path.resolve(strict=False)
-    if output_path == config.source or config.source in output_path.parents:
+    if is_same_or_inside(output_path, config.source):
         raise RescueError(f"customer report output must not be inside source: {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     markdown = customer_markdown_report(job_dir, report_text)

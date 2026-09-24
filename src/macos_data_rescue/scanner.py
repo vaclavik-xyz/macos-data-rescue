@@ -8,11 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import RescueError
+from .locking import exclusive_job
 from .manifest import (
     GATED_PHASES,
     ScannedFile,
     approval_required_message,
-    clear_scan_cursor,
+    begin_scan,
     load_approval,
     load_config,
     load_scan_cursor,
@@ -20,6 +21,7 @@ from .manifest import (
     migrate_manifest,
     scan_cursor_key,
     upsert_scanned_files,
+    validate_application_layout,
 )
 
 
@@ -115,6 +117,7 @@ class ScanSummary:
         return line
 
 
+@exclusive_job
 def scan_job(
     job_dir: Path,
     *,
@@ -138,9 +141,12 @@ def scan_job(
             )
     if not config.source.exists():
         raise RescueError(f"source does not exist: {config.source}")
+    if scan_phase == "applications":
+        validate_application_layout(config)
     migrate_manifest(job_dir)
     limiter = ScanLimiter(limit=limit, timeout=timeout)
-    cursor = load_scan_cursor(job_dir, scan_phase)
+    cursor = load_scan_cursor(job_dir, scan_phase) or None
+    begin_scan(job_dir, scan_phase)
     count = upsert_scanned_files(
         job_dir,
         limiter.wrap(iter_source_files(config.source, phase=scan_phase), skip_until_after=cursor),
@@ -156,7 +162,6 @@ def scan_job(
             cursor_key=scan_cursor_key(scan_phase),
         )
     if limiter.stopped is None:
-        clear_scan_cursor(job_dir, scan_phase)
         mark_scan_complete(job_dir, scan_phase)
     return ScanSummary(scanned=count, stopped=limiter.stopped)
 
@@ -288,8 +293,12 @@ def volume_root_for_home(source: Path) -> Path:
     return source.parent
 
 
+def scan_error(exc: OSError) -> None:
+    raise RescueError(f"scan incomplete: {exc}; fix source access and repeat scan") from exc
+
+
 def iter_tree(source: Path, scan_root: Path, phase: str):
-    for root, dirs, files in os.walk(scan_root, topdown=True, followlinks=False):
+    for root, dirs, files in os.walk(scan_root, topdown=True, followlinks=False, onerror=scan_error):
         root_path = Path(root)
         dirs.sort()
         files.sort()
@@ -321,8 +330,8 @@ def iter_tree(source: Path, scan_root: Path, phase: str):
                 continue
             try:
                 info = path.stat(follow_symlinks=False)
-            except OSError:
-                continue
+            except OSError as exc:
+                scan_error(exc)
             yield ScannedFile(
                 relative_path="/".join(rel_parts),
                 size=info.st_size,
@@ -335,7 +344,7 @@ def iter_tree(source: Path, scan_root: Path, phase: str):
 
 
 def iter_application_tree(scan_root: Path, dest_prefix: str):
-    for root, dirs, files in os.walk(scan_root, topdown=True, followlinks=False):
+    for root, dirs, files in os.walk(scan_root, topdown=True, followlinks=False, onerror=scan_error):
         root_path = Path(root)
         dirs.sort()
         files.sort()
@@ -351,8 +360,8 @@ def iter_application_tree(scan_root: Path, dest_prefix: str):
             path = root_path / filename
             try:
                 info = path.stat(follow_symlinks=False)
-            except OSError:
-                continue
+            except OSError as exc:
+                scan_error(exc)
             rel = Path(dest_prefix) / path.relative_to(scan_root)
             rel_parts = rel.parts
             yield ScannedFile(
@@ -376,8 +385,8 @@ def scanned_symlink(
 ) -> ScannedFile | None:
     try:
         info = path.stat(follow_symlinks=False)
-    except OSError:
-        return None
+    except OSError as exc:
+        scan_error(exc)
     return ScannedFile(
         relative_path="/".join(rel_parts),
         source_path=source_path,

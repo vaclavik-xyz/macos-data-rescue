@@ -33,3 +33,20 @@ The MVP now ships:
 1. Add destination free-space preflight with a conservative operator-facing warning before long copy runs.
 2. Add timeout-guarded or interrupt-friendly scanning for severely failing disks where `os.walk`/`stat` can hang before copy starts.
 3. Consider explicit retry policy flags for failed/timed-out rows after the MVP stabilizes.
+
+## Review corrections (2026-09-24)
+
+- Existing jobs keep their source, destination, profile, and creation time.
+  Use a new job directory for a different source or destination.
+- Job and destination must be disjoint. A destination must not contain the
+  source; application scans also validate their additional source roots.
+- Scan and copy writers use an advisory job lock. Do not run another tool
+  that changes the source or destination while a rescue is running.
+- Scan access errors stop the command without marking coverage complete.
+  Committed batches remain copyable; correct access and repeat the scan.
+- Cleanup only removes temporary files registered by this job with matching
+  device/inode. Old unregistered `.rescue-tmp` files require technician review;
+  filenames alone cannot distinguish leftovers from customer content.
+- Rescanning unchanged rows retains copy warnings; changed content/kind/source
+  resets retry attempts. Customer reports describe the recorded files and do
+  not certify complete source coverage.

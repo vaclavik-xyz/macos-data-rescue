@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .errors import RescueError
+from .locking import exclusive_job
 from .manifest import (
     approval_required_message,
     connect,
@@ -21,6 +22,7 @@ from .manifest import (
     mark_result,
     migrate_manifest,
     unapproved_gated_phases,
+    validate_application_layout,
 )
 
 
@@ -51,12 +53,19 @@ class CopySummary:
         )
 
 
+@exclusive_job
 def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = None) -> CopySummary:
     config = load_config(job_dir)
     if config.profile == "customer-home":
         blocked = unapproved_gated_phases(job_dir, phase)
         if blocked:
             raise RescueError(approval_required_message(job_dir, blocked))
+    if phase in {"all", "applications"}:
+        with connect(job_dir) as check_conn:
+            has_apps = check_conn.execute("select 1 from files where phase = 'applications' limit 1").fetchone()
+        check_conn.close()
+        if has_apps:
+            validate_application_layout(config)
     migrate_manifest(job_dir)
     cleanup_stale_temps(job_dir, phase, config.dest)
     summary = CopySummary()
@@ -151,7 +160,7 @@ def process_row(
         summary.failed += 1
         return
 
-    result = copy_one_with_timeout(source, dest, timeout, expected_size=int(row["size"]), worker=worker)
+    result = copy_one_with_timeout(source, dest, timeout, expected_size=int(row["size"]), worker=worker, registry_conn=conn)
     status = str(result["status"])
     if status == "copied":
         copied_bytes = int(result.get("copied_bytes", 0))
@@ -271,7 +280,9 @@ def is_same_or_inside(candidate: Path, parent: Path) -> bool:
 
 def destination_matches(dest: Path, row: Any) -> bool:
     try:
-        info = dest.lstat() if row["kind"] == "symlink" else dest.stat()
+        info = dest.lstat()
+        if not stat.S_ISREG(info.st_mode):
+            return False
     except OSError:
         return False
     if info.st_size != row["size"]:
@@ -286,12 +297,17 @@ def copy_one_with_timeout(
     *,
     expected_size: int,
     worker: CopyWorker | None = None,
+    registry_conn=None,
 ) -> dict[str, object]:
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         temp = make_temp_path(dest)
     except OSError as exc:
         return {"status": "failed", "error": f"{type(exc).__name__}: {exc}", "copied_bytes": 0}
+    if registry_conn is not None:
+        info = temp.lstat()
+        registry_conn.execute("insert into temporary_files values(?, ?, ?)", (str(temp), info.st_dev, info.st_ino))
+        registry_conn.commit()
     owns_worker = worker is None
     if worker is None:
         worker = CopyWorker()
@@ -302,6 +318,9 @@ def copy_one_with_timeout(
             worker.close()
     if str(result.get("status")) != "copied":
         cleanup_path(temp)
+    if registry_conn is not None and not temp.exists():
+        registry_conn.execute("delete from temporary_files where path = ?", (str(temp),))
+        registry_conn.commit()
     return result
 
 
@@ -475,24 +494,25 @@ def make_temp_path(dest: Path) -> Path:
 
 
 def cleanup_stale_temps(job_dir: Path, phase: str, dest_root: Path) -> None:
-    protected_names_by_dir: dict[Path, set[str]] = {}
-    for row in iter_selected_files(job_dir, phase):
-        try:
-            dest = resolve_relative_path(dest_root, row["relative_path"], kind=row["kind"])
-        except ValueError:
-            continue
-        protected_names_by_dir.setdefault(dest.parent, set()).add(dest.name)
-
-    for directory, protected_names in protected_names_by_dir.items():
-        try:
-            entries = list(directory.iterdir())
-        except OSError:
-            continue
-        for entry in entries:
-            if entry.name in protected_names:
-                continue
-            if is_internal_temp_name(entry.name):
-                cleanup_path(entry)
+    # A suffix is not proof of ownership. Delete only files registered by this
+    # job, with the same inode, and never a path belonging to a manifest row.
+    conn = connect(job_dir)
+    try:
+        protected = {row["relative_path"] for row in conn.execute("select relative_path from files")}
+        for row in conn.execute("select * from temporary_files").fetchall():
+            path = Path(row["path"])
+            try:
+                rel = str(path.relative_to(dest_root))
+                safe = resolve_relative_path(dest_root, rel, kind="file")
+                info = safe.lstat()
+                if rel not in protected and info.st_dev == row["device"] and info.st_ino == row["inode"]:
+                    cleanup_path(safe)
+            except (OSError, ValueError):
+                pass
+            conn.execute("delete from temporary_files where path = ?", (row["path"],))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def is_internal_temp_name(name: str) -> bool:
