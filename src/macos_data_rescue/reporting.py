@@ -365,6 +365,7 @@ def report_payload(job_dir: Path) -> dict[str, object]:
             "excludes": list(config.excludes),
         },
         "summary": normalized_summary(job_dir),
+        "verification": verification_counts(rows),
         "warnings": list(WARNINGS),
         "files": [row_to_dict(row) for row in rows],
     }
@@ -387,6 +388,8 @@ def markdown_report(job_dir: Path) -> str:
     for status in STATUSES:
         item = summary[status]
         lines.append(f"| {status} | {item['count']} | {item['bytes']} |")
+    lines.extend(["", "## Destination integrity", "", str(payload["verification"]),
+                  "SHA256 covers file content only; unverified files are not certified."])
     lines.extend(["", "## Important warnings", ""])
     warnings = cast(list[dict[str, str]], payload["warnings"])
     for warning in warnings:
@@ -405,6 +408,8 @@ def markdown_report(job_dir: Path) -> str:
         if item.get("fallback_source_path"):
             error += f" - fallback source: `{item['fallback_source_path']}`"
             error += f" - original error: {item.get('fallback_original_error') or 'not recorded'}"
+        if item.get("verification_status"):
+            error += f" - verification: {item['verification_status']} ({item.get('verification_error') or 'SHA256 matches'})"
         warning = f" - WARNING: {item['warning']}" if item["warning"] else ""
         lines.append(
             f"- `{item['relative_path']}` - {item['status']} - {item['size']} bytes{copied}{error}{warning}"
@@ -427,7 +432,7 @@ def customer_markdown_report(job_dir: Path, text: CustomerReportText | None = No
     copying = summary["copying"]["count"]
     compressed = summary[UNREADABLE_COMPRESSED]["count"]
     fallback = summary["copied_from_fallback"]["count"]
-    unresolved = failed + timed_out + pending + copying + compressed
+    unresolved = failed + timed_out + pending + copying + compressed + verification_counts(rows)["failed"]
     lines = [
         f"# {text.title}",
         "",
@@ -515,6 +520,7 @@ def customer_markdown_report(job_dir: Path, text: CustomerReportText | None = No
             f"## {text.important_notes}",
             "",
             f"- {text.copied_note}",
+            f"- {integrity_note(rows, text)}",
             f"- {text.metadata_note}",
             f"- {text.icloud_note}",
             f"- {text.practical_note}",
@@ -544,7 +550,7 @@ def customer_pdf_bytes(job_dir: Path, text: CustomerReportText | None = None) ->
     copying = summary["copying"]["count"]
     compressed = summary[UNREADABLE_COMPRESSED]["count"]
     fallback = summary["copied_from_fallback"]["count"]
-    unresolved = failed + timed_out + pending + copying + compressed
+    unresolved = failed + timed_out + pending + copying + compressed + verification_counts(rows)["failed"]
     canvas = PdfCanvas()
     canvas.header(text.title, text.subtitle)
     canvas.status_card(
@@ -594,6 +600,7 @@ def customer_pdf_bytes(job_dir: Path, text: CustomerReportText | None = None) ->
         canvas.table((text.library_area, text.files, text.size), library_rows, (240, 80, 130))
     canvas.section(text.important_notes)
     canvas.bullet(text.copied_note)
+    canvas.bullet(integrity_note(rows, text))
     canvas.bullet(text.metadata_note)
     canvas.bullet(text.icloud_note)
     canvas.bullet(text.practical_note)
@@ -1035,7 +1042,26 @@ def row_to_dict(row) -> dict[str, object]:
     }
     if "source_path" in row.keys() and row["source_path"]:
         item["source_path"] = row["source_path"]
-    for key in ("fallback_source_path", "fallback_mtime_ns", "fallback_original_error"):
+    for key in ("fallback_source_path", "fallback_mtime_ns", "fallback_original_error",
+                "sha256", "verification_status", "verification_error", "verified_at"):
         if key in row.keys() and row[key] is not None:
             item[key] = row[key]
     return item
+
+
+def verification_counts(rows) -> dict[str, int]:
+    counts = dict.fromkeys(("verified", "failed", "unverifiable", "not_checked"), 0)
+    for row in rows:
+        if row["status"] in COPIED_STATUSES:
+            counts[row["verification_status"] or "not_checked"] += 1
+    return counts
+
+
+def integrity_note(rows, text: CustomerReportText) -> str:
+    counts = verification_counts(rows)
+    unchecked = counts["not_checked"] + counts["unverifiable"]
+    if text == CUSTOMER_REPORT_TEXT["cs"]:
+        return (f"SHA256 obsahu cílových souborů: ověřeno {counts['verified']}, "
+                f"chyba {counts['failed']}, neověřeno {unchecked}. Kontrola nepotvrzuje úplnost zdroje.")
+    return (f"Destination content SHA256: verified {counts['verified']}, "
+            f"failed {counts['failed']}, unchecked {unchecked}. This does not certify source coverage.")

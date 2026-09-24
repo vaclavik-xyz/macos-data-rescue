@@ -12,6 +12,7 @@ from .manifest import GATED_PHASES, init_manifest, record_approval
 from .preflight import preflight_job
 from .reporting import CUSTOMER_REPORT_LANGUAGES, report, status_text, write_customer_report
 from .scanner import scan_job
+from .verification import verify_job
 
 
 PHASES = (
@@ -64,6 +65,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     resume_parser = subparsers.add_parser("resume", help="Resume a copy job.")
     add_copy_options(resume_parser)
+
+    verify_parser = subparsers.add_parser("verify", help="Verify destination SHA256 without rereading source files.")
+    verify_parser.add_argument("--job-dir", required=True, type=Path)
+    verify_parser.add_argument("--phase", default="all", choices=PHASES)
+    verify_parser.add_argument("--timeout", default=30.0, type=positive_float)
+    verify_parser.add_argument("--limit", type=positive_int)
 
     status_parser = subparsers.add_parser("status", help="Print manifest status counts.")
     status_parser.add_argument("--job-dir", required=True, type=Path)
@@ -144,6 +151,11 @@ def main(argv: list[str] | None = None) -> int:
                 fallback_from=args.fallback_from,
             )
             print(summary.as_line())
+        elif args.command == "verify":
+            summary = verify_job(args.job_dir, phase=args.phase, timeout=args.timeout, limit=args.limit)
+            print(summary.as_line())
+            if summary.failed or summary.unverifiable:
+                return 1
         elif args.command == "status":
             print(status_text(args.job_dir))
         elif args.command == "next":

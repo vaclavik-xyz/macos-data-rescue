@@ -110,7 +110,9 @@ def create_schema(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "files", "source_path", "text")
     ensure_column(conn, "files", "warning", "text")
     for column, definition in (("fallback_source_path", "text"), ("fallback_mtime_ns", "integer"),
-                               ("fallback_original_error", "text")):
+                               ("fallback_original_error", "text"), ("sha256", "text"),
+                               ("verification_status", "text"), ("verification_error", "text"),
+                               ("verified_at", "text")):
         ensure_column(conn, "files", column, definition)
 
 
@@ -531,7 +533,8 @@ def upsert_scanned_files(
             )
             if not keep_status:
                 conn.execute("update files set fallback_source_path = null, fallback_mtime_ns = null, "
-                             "fallback_original_error = null where relative_path = ?", (item.relative_path,))
+                             "fallback_original_error = null, sha256 = null, verification_status = null, "
+                             "verification_error = null, verified_at = null where relative_path = ?", (item.relative_path,))
             count += 1
             pending += 1
             batch_cursor = item.relative_path
@@ -643,6 +646,7 @@ def mark_copying(job_dir: Path, file_id: int, *, conn: sqlite3.Connection | None
             """
             update files
             set status = 'copying',
+                sha256 = null, verification_status = null, verification_error = null, verified_at = null,
                 attempts = attempts + 1,
                 error = null,
                 started_at = ?,
@@ -667,6 +671,7 @@ def mark_result(
     warning=WARNING_UNCHANGED,
     copied_bytes: int = 0,
     fallback_mtime_ns: int | None = None,
+    sha256: str | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> None:
     owns_conn = conn is None
@@ -701,6 +706,7 @@ def mark_result(
                 """,
                 (status, error, warning, copied_bytes, now, now, file_id),
             )
+        conn.execute("update files set sha256 = ? where id = ?", (sha256, file_id))
         if fallback_mtime_ns is not None:
             conn.execute("update files set fallback_mtime_ns = ? where id = ?", (fallback_mtime_ns, file_id))
         conn.commit()

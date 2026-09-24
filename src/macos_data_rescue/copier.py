@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import errno
+import hashlib
 import multiprocessing
 import multiprocessing.process
 import os
@@ -202,6 +203,7 @@ def process_row(
             row["id"],
             "copied_from_fallback" if fallback else "copied",
             copied_bytes=copied_bytes,
+            sha256=result.get("sha256"),
             fallback_mtime_ns=int(result["source_mtime_ns"]) if fallback else None,
             warning=combine_warnings(scan_warning, result.get("warning")),
             conn=conn,
@@ -415,6 +417,11 @@ class CopyWorker:
             return self._wait_result(timeout)
         return {"status": "failed", "error": "copy worker could not be started", "copied_bytes": 0}
 
+    def verify_one(self, root: Path, relative_path: str, timeout: float) -> dict[str, object]:
+        self._ensure_worker()
+        self._conn.send({"verify": str(root), "path": relative_path})
+        return self._wait_result(timeout)
+
     def close(self) -> None:
         process, conn = self._process, self._conn
         self._process = None
@@ -505,8 +512,12 @@ def _copy_worker_loop(conn) -> None:
             return
         if job is None:
             return
-        source_text, dest_text, temp_text, expected_size = job
-        result = _copy_one_in_worker(Path(source_text), Path(dest_text), Path(temp_text), expected_size)
+        if isinstance(job, dict) and "verify" in job:
+            from .verification import hash_destination
+            result = hash_destination(Path(job["verify"]), job["path"])
+        else:
+            source_text, dest_text, temp_text, expected_size = job
+            result = _copy_one_in_worker(Path(source_text), Path(dest_text), Path(temp_text), expected_size)
         result["worker_pid"] = os.getpid()
         try:
             conn.send(result)
@@ -516,6 +527,7 @@ def _copy_worker_loop(conn) -> None:
 
 def _copy_one_in_worker(source: Path, dest: Path, temp: Path, expected_size: int) -> dict[str, object]:
     copied_bytes = 0
+    digest = hashlib.sha256()
     source_info = None
     reading_source = False
     try:
@@ -533,6 +545,7 @@ def _copy_one_in_worker(source: Path, dest: Path, temp: Path, expected_size: int
                     if not chunk:
                         break
                     dst.write(chunk)
+                    digest.update(chunk)
                     copied_bytes += len(chunk)
                 dst.flush()
                 os.fsync(dst.fileno())
@@ -548,7 +561,7 @@ def _copy_one_in_worker(source: Path, dest: Path, temp: Path, expected_size: int
         os.replace(temp, dest)
         fsync_directory(dest.parent)
         result: dict[str, object] = {"status": "copied", "copied_bytes": copied_bytes,
-                                     "source_mtime_ns": source_info.st_mtime_ns}
+                                     "source_mtime_ns": source_info.st_mtime_ns, "sha256": digest.hexdigest()}
         if xattr_warning:
             result["warning"] = xattr_warning
         return result
