@@ -9,6 +9,7 @@ from .manifest import (
     JobConfig,
     UNREADABLE_COMPRESSED,
     connect,
+    scan_issues,
     load_approval,
     load_config,
     load_scan_cursor,
@@ -38,6 +39,9 @@ def next_text(job_dir: Path) -> str:
         return "\n".join(lines + [f"state: paused ({activity.get('reason')})",
                                   "Reconnect the original disks / free destination space, then run:",
                                   base_cmd("resume", "--job-dir", quoted(job_dir), "--phase", quoted(activity["phase"]))])
+    issues = scan_issues(job_dir)
+    if issues:
+        lines.append(f"review: {len(issues)} unscanned path(s); coverage is incomplete. Inspect report and retry scan after fixing access.")
     exhausted = sum(int(item["exhausted"]) for item in stats.values())
     if exhausted:
         lines.append(

@@ -147,7 +147,7 @@ def test_resumed_scan_timeout_checks_skipped_cursor_items(tmp_path: Path, monkey
     finally:
         conn.close()
 
-    def slow_files(source_path: Path, *, phase: str, excludes=()):
+    def slow_files(source_path: Path, *, phase: str, excludes=(), **kwargs):
         for name in ("skip-1.txt", "skip-2.txt", "cursor.txt", "after.txt"):
             time.sleep(0.02)
             yield ScannedFile(
@@ -196,7 +196,7 @@ def test_stale_cursor_restart_keeps_original_scan_deadline(tmp_path: Path, monke
 
     calls = 0
 
-    def files(source_path: Path, *, phase: str, excludes=()):
+    def files(source_path: Path, *, phase: str, excludes=(), **kwargs):
         nonlocal calls
         calls += 1
         name = "before.txt" if calls == 1 else "after.txt"
@@ -231,7 +231,7 @@ def test_scan_timeout_commits_partial_manifest(tmp_path: Path, monkeypatch) -> N
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
     run_cli("approve", "--job-dir", str(job_dir), "--phase", "library")
 
-    def slow_files(source_path: Path, *, phase: str, excludes=()):
+    def slow_files(source_path: Path, *, phase: str, excludes=(), **kwargs):
         for index in range(5):
             time.sleep(0.02)
             yield ScannedFile(

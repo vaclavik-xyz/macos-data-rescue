@@ -42,15 +42,16 @@ def test_scan_error_never_marks_complete_and_next_resumes(tmp_path, monkeypatch)
     source = tmp_path / 'source'
     write_file(source / 'Desktop/a', b'a')
     job, _, _ = init_and_scan(tmp_path, source)
-    original_walk = scanner.os.walk
+    from macos_data_rescue.scan_worker import ScanIssue
+    original_files = scanner.iter_source_files
 
-    def failing_walk(root, **kwargs):
-        yield from original_walk(root, **kwargs)
-        kwargs['onerror'](PermissionError(13, 'access denied', str(root / 'private')))
+    def failing_files(root, **kwargs):
+        yield from original_files(root, **kwargs)
+        yield ScanIssue(str(root / 'private'), kwargs['phase'], 'access denied')
 
-    monkeypatch.setattr(scanner.os, 'walk', failing_walk)
-    with pytest.raises(RescueError, match='scan incomplete'):
-        scanner.scan_job(job, phase='visible-home', batch_size=1)
+    monkeypatch.setattr(scanner, 'iter_source_files', failing_files)
+    summary = scanner.scan_job(job, phase='visible-home', batch_size=1)
+    assert summary.issues == 1
     assert config_value(job, 'scan_done:visible-home') is None
     assert config_value(job, 'scan_cursor:visible-home') == 'Desktop/a'
     assert file_rows(job)['Desktop/a']['status'] == 'pending'
@@ -187,16 +188,18 @@ def test_selected_scan_root_access_error_is_not_an_empty_scope(tmp_path, monkeyp
     source = tmp_path / 'source'
     write_file(source / 'Desktop/a', b'a')
     job, _, _ = init_and_scan(tmp_path, source)
-    original_stat = type(source).stat
+    from macos_data_rescue.scan_worker import ScanWorker
+    original_request = ScanWorker.request
 
-    def denied_root(path, *args, **kwargs):
+    def denied_root(worker, operation, path, parts=()):
         if path == source / 'Desktop':
-            raise PermissionError('cannot stat selected root')
-        return original_stat(path, *args, **kwargs)
+            return {'error': 'cannot stat selected root'}
+        return original_request(worker, operation, path, parts)
 
-    monkeypatch.setattr(type(source), 'stat', denied_root)
-    with pytest.raises(RescueError, match='cannot stat selected root'):
-        scanner.scan_job(job, phase='important')
+    monkeypatch.setattr(ScanWorker, 'request', denied_root)
+    result = scanner.scan_job(job, phase='important')
+    assert result.issues == 1
+    assert 'cannot stat selected root' in manifest.scan_issues(job)[0]['error']
     assert config_value(job, 'scan_done:important') is None
 
 

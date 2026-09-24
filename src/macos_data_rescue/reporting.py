@@ -10,7 +10,7 @@ from typing import cast
 
 from .activity import activity_snapshot, activity_text
 from .errors import RescueError
-from .manifest import COPIED_STATUSES, UNREADABLE_COMPRESSED, all_files, is_same_or_inside, load_config, migrate_manifest, status_summary, volume_root_for_home
+from .manifest import scan_issues, COPIED_STATUSES, UNREADABLE_COMPRESSED, all_files, is_same_or_inside, load_config, migrate_manifest, status_summary, volume_root_for_home
 
 
 STATUSES = ("pending", "copying", *COPIED_STATUSES, "failed", "timed_out", UNREADABLE_COMPRESSED, "skipped")
@@ -37,14 +37,10 @@ WARNINGS = (
         ),
     },
     {
-        "code": "scan_timeout_is_cooperative",
-        "title": "Scan timeout is cooperative",
-        "message": (
-            "Scan commits manifest rows in batches and can stop at --timeout or "
-            "--limit between files. It still walks and stats the mounted source "
-            "directly, so a severe disk/kernel I/O hang inside one filesystem call "
-            "can still stall scan."
-        ),
+        "code": "scan_coverage",
+        "title": "Scan coverage can be incomplete",
+        "message": "Scan I/O runs in a bounded worker. Failed or timed-out paths are recorded separately; "
+                   "unscanned subtrees have unknown contents. Initial path validation still depends on the OS.",
     },
 )
 
@@ -366,6 +362,7 @@ def report_payload(job_dir: Path) -> dict[str, object]:
         "summary": normalized_summary(job_dir),
         "verification": verification_counts(rows),
         "activity": activity_snapshot(job_dir),
+        "scan_issues": scan_issues(job_dir),
         "warnings": list(WARNINGS),
         "files": [row_to_dict(row) for row in rows],
     }
@@ -388,6 +385,10 @@ def markdown_report(job_dir: Path) -> str:
     for status in STATUSES:
         item = summary[status]
         lines.append(f"| {status} | {item['count']} | {item['bytes']} |")
+    if payload["scan_issues"]:
+        lines.extend(["", "## Unscanned paths (incomplete coverage)", ""])
+        for issue in payload["scan_issues"]:
+            lines.append(f"- `{issue['path']}` ({issue['phase']}): {issue['error']}")
     lines.extend(["", "## Destination integrity", "", str(payload["verification"]),
                   "SHA256 covers file content only; unverified files are not certified."])
     lines.extend(["", "## Important warnings", ""])
@@ -432,7 +433,7 @@ def customer_markdown_report(job_dir: Path, text: CustomerReportText | None = No
     copying = summary["copying"]["count"]
     compressed = summary[UNREADABLE_COMPRESSED]["count"]
     fallback = summary["copied_from_fallback"]["count"]
-    unresolved = failed + timed_out + pending + copying + compressed + verification_counts(rows)["failed"]
+    unresolved = failed + timed_out + pending + copying + compressed + verification_counts(rows)["failed"] + len(scan_issues(job_dir))
     lines = [
         f"# {text.title}",
         "",
@@ -521,6 +522,7 @@ def customer_markdown_report(job_dir: Path, text: CustomerReportText | None = No
             "",
             f"- {text.copied_note}",
             f"- {integrity_note(rows, text)}",
+            f"- {coverage_note(job_dir, text)}",
             f"- {text.metadata_note}",
             f"- {text.icloud_note}",
             f"- {text.practical_note}",
@@ -550,7 +552,7 @@ def customer_pdf_bytes(job_dir: Path, text: CustomerReportText | None = None) ->
     copying = summary["copying"]["count"]
     compressed = summary[UNREADABLE_COMPRESSED]["count"]
     fallback = summary["copied_from_fallback"]["count"]
-    unresolved = failed + timed_out + pending + copying + compressed + verification_counts(rows)["failed"]
+    unresolved = failed + timed_out + pending + copying + compressed + verification_counts(rows)["failed"] + len(scan_issues(job_dir))
     canvas = PdfCanvas()
     canvas.header(text.title, text.subtitle)
     canvas.status_card(
@@ -601,6 +603,7 @@ def customer_pdf_bytes(job_dir: Path, text: CustomerReportText | None = None) ->
     canvas.section(text.important_notes)
     canvas.bullet(text.copied_note)
     canvas.bullet(integrity_note(rows, text))
+    canvas.bullet(coverage_note(job_dir, text))
     canvas.bullet(text.metadata_note)
     canvas.bullet(text.icloud_note)
     canvas.bullet(text.practical_note)
@@ -1065,3 +1068,10 @@ def integrity_note(rows, text: CustomerReportText) -> str:
                 f"chyba {counts['failed']}, neověřeno {unchecked}. Kontrola nepotvrzuje úplnost zdroje.")
     return (f"Destination content SHA256: verified {counts['verified']}, "
             f"failed {counts['failed']}, unchecked {unchecked}. This does not certify source coverage.")
+
+
+def coverage_note(job_dir, text):
+    count = len(scan_issues(job_dir))
+    if text == CUSTOMER_REPORT_TEXT["cs"]:
+        return f"Neprozkoumané cesty: {count}. Jejich obsah není zahrnut v počtu souborů; podrobnosti má technik."
+    return f"Unscanned paths: {count}. Their unknown contents are not included in file counts; see the technician report."

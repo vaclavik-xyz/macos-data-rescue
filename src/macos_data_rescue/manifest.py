@@ -97,6 +97,13 @@ def create_schema(conn: sqlite3.Connection) -> None:
             updated_at text not null
         );
 
+        create table if not exists scan_issues (
+            path text not null,
+            phase text not null,
+            error text not null,
+            updated_at text not null,
+            primary key (path, phase)
+        );
         create table if not exists temporary_files (
             path text primary key,
             device integer not null,
@@ -211,6 +218,7 @@ def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str, *, excl
         now = utc_now()
         from .storage import storage_anchors
         values = {
+            "scan_engine": "isolated-v1",
             "storage_anchors": json.dumps(storage_anchors(source_resolved, dest_resolved)),
             "source": str(source_resolved),
             "dest": str(dest_resolved),
@@ -459,9 +467,26 @@ def upsert_scanned_files(
     count = 0
     pending = 0
     batch_cursor: str | None = None
+    known_issues = {(row[0], row[1]) for row in conn.execute("select path, phase from scan_issues")}
     try:
+        from .scan_worker import ScanIssue
         for item in files:
             now = utc_now()
+            if isinstance(item, ScanIssue):
+                if item.error is None:
+                    if (item.path, item.phase) not in known_issues:
+                        continue
+                    known_issues.discard((item.path, item.phase))
+                    conn.execute("delete from scan_issues where path = ? and phase = ?", (item.path, item.phase))
+                else:
+                    known_issues.add((item.path, item.phase))
+                    conn.execute("insert or replace into scan_issues values(?, ?, ?, ?)",
+                                 (item.path, item.phase, item.error, now))
+                # Commit coverage changes and the preceding file cursor together.
+                commit_scan_batch(conn, cursor_key=cursor_key, cursor_value=batch_cursor)
+                pending = 0
+                batch_cursor = None
+                continue
             existing = conn.execute(
                 """
                 select size, mtime_ns, kind, source_path, warning, attempts, status, error, copied_bytes, started_at, finished_at
@@ -742,5 +767,16 @@ def all_files(job_dir: Path) -> list[sqlite3.Row]:
     conn = connect(job_dir)
     try:
         return conn.execute("select * from files order by relative_path").fetchall()
+    finally:
+        conn.close()
+
+
+def scan_issues(job_dir: Path, phase: str | None = None) -> list[dict]:
+    conn = connect(job_dir)
+    try:
+        if not conn.execute("select 1 from sqlite_master where name = 'scan_issues'").fetchone():
+            return []
+        return [dict(row) for row in conn.execute(
+            "select * from scan_issues where (? is null or phase = ?) order by phase, path", (phase, phase))]
     finally:
         conn.close()

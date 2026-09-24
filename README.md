@@ -167,7 +167,7 @@ Re-running `scan` for another phase upserts rows into the same manifest without 
 
 **Overlapping phases relabel rows:** when a later scan covers a file that an earlier phase already recorded (for example `full-home` after `visible-home`), the row's `phase` column is updated to the later phase. Copy status and results are preserved, but `copy --phase visible-home` no longer selects those rows; use the later phase (or `--phase all`) for follow-up copy/resume runs.
 
-`scan --timeout SECONDS` stops cooperatively between files and prints `stopped=timeout`. `scan --limit N` records at most `N` scan results for that run and prints `stopped=limit` when the run reached that cap. Both modes commit rows in batches, so `copy` can start from the partial manifest.
+`scan --timeout SECONDS` bounds the overall traversal and prints `stopped=timeout`. `--io-timeout SECONDS` bounds each listing/stat operation (default 30); failed paths are recorded while other siblings continue. `scan --limit N` records at most `N` scan results for that run and prints `stopped=limit` when the run reached that cap. Both modes commit rows in batches, so `copy` can start from the partial manifest.
 
 Default excludes include `.Trash`, `Library/Caches`, `Library/Logs`, `node_modules`, `.Spotlight-V100`, `.fseventsd`, `__pycache__`, and common cache folders.
 
@@ -179,7 +179,7 @@ Default excludes include `.Trash`, `Library/Caches`, `Library/Logs`, `node_modul
 - macOS extended attributes/resource forks are preserved best-effort through libSystem. The copier deliberately skips `com.apple.quarantine` and `com.apple.macl`; other xattr failures are reported as per-file warnings. `copied` guarantees content byte-count completeness, not full metadata preservation.
 - **Copy completeness:** `copied` means the worker copied the same byte count that was recorded in the manifest for that file. If the worker reads fewer bytes, the file is marked `failed`, any partial temp output is discarded, and JSON/Markdown reports show the partial byte count.
 - **iCloud / Optimize Mac Storage warning:** files offloaded by iCloud Drive or Photos may exist on the mounted disk only as dataless placeholders. Over Share Disk / Target Disk Mode they can copy as empty or tiny files and cannot be downloaded from the mounted volume. The report marks specific files as `suspected iCloud dataless placeholder` when the macOS dataless file flag or conservative path/xattr/size heuristics match; the customer must be told that those files may not have been physically present on disk, and recovery may require the live signed-in Mac or iCloud.com/export.
-- Per-file timeouts protect the copy phase. Scan `--timeout` is cooperative between files and scan commits rows in batches, but a severe disk/kernel I/O hang inside one filesystem call can still stall scan.
+- Scan traversal and copy reads use isolated workers. Scan path validation and copy destination setup still involve parent-process filesystem calls; severe kernel I/O hangs there can still stall the command. See [rescue operations](docs/rescue-operations.md) for exact timeout and pause behavior.
 - For true hardware/kernel I/O hangs, a killed child may not exit immediately; the parent records timeout and continues as far as the OS allows.
 - This is not a forensic imaging tool. It is a practical technician rescue copier for mounted, unlocked user data.
 

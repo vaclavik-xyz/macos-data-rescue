@@ -42,3 +42,20 @@ identity certificate: the operator must reconnect the original disks. Keep the
 job directory on a reliable local disk; loss of the job disk itself prevents
 persisting a pause reason. Existing path validation and destination setup still
 involve parent-process filesystem calls and remain subject to kernel I/O hangs.
+
+## Isolated scan I/O
+
+`scan --job-dir JOB --io-timeout 30 [--timeout TOTAL] [--limit N]` performs
+list/stat/xattr calls in a persistent spawned process. A timed-out or crashed
+worker is killed and replaced before scanning the next path. If the OS cannot
+kill it, scanning stops instead of accumulating blocked processes. The overall
+time budget is absolute and includes worker startup and cursor replay.
+
+Failed paths persist in `scan_issues` with phase and error; `report` lists them,
+customer reports flag incomplete coverage, and scan exits 1. A failed directory
+listing means its unknown subtree cannot be enumerated, but other known siblings
+are still scanned. Retry the same scan after correcting the source problem.
+Jobs with unresolved paths restart traversal so repaired files before the old
+cursor are not missed. Successful reinspection clears each corresponding issue;
+unvisited issues remain. Old partial cursors are reset once when upgrading the
+traversal engine, while copied statuses and digests remain intact.

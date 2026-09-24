@@ -191,8 +191,9 @@ uv run macos-data-rescue report --job-dir "$JOB" --format json > "$JOB/report.js
 Exit codes describe whether the command itself ran:
 
 - `0`: command completed. `copy` and `resume` can still return `0` when individual files are `failed` or `timed_out`.
-- `1`: job/runtime error, such as unsafe paths, missing manifest, missing source, or unexpected failure.
+- `1`: job/runtime error, unresolved scan paths, or failed/unverifiable destination integrity checks.
 - `2`: CLI usage error from argparse, such as invalid phase or missing required option.
+- `3`: copy paused because storage is unavailable or destination space/quota is exhausted. Reconnect the original disks or free space, then resume.
 
 Per-file statuses in `status` and reports are the real rescue outcome:
 
@@ -204,7 +205,7 @@ Per-file statuses in `status` and reports are the real rescue outcome:
 - `skipped`: intentionally not copied, currently used for symlinks to avoid following external targets.
 Warnings are separate per-file report fields, not statuses. They are customer-visible notes such as suspected iCloud dataless placeholder or xattr preservation issue.
 
-Scan output may include `stopped=timeout` or `stopped=limit`. That is not a copy failure. It means the scan command intentionally stopped after committing a partial manifest; run `copy`/`resume`, then repeat the same phase scan if more coverage is needed. Repeated scans of the same phase resume from the saved cursor and clear it after the phase completes.
+Scan output may include `stopped=timeout` or `stopped=limit`. That is not a copy failure. It means the scan command intentionally stopped after committing a partial manifest; run `copy`/`resume`, then repeat the same phase scan if more coverage is needed. Repeated scans of the same phase resume from the saved cursor and clear it after the phase completes. Unresolved scan paths force a fresh traversal on retry so repaired paths before the cursor are not missed. `scan --io-timeout` bounds each worker operation; inspect `scan_issues` in the report.
 
 ## Warnings To Explain
 

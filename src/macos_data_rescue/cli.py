@@ -58,7 +58,8 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser = subparsers.add_parser("scan", help="Scan source files into the manifest.")
     scan_parser.add_argument("--job-dir", required=True, type=Path)
     scan_parser.add_argument("--phase", default="all", choices=PHASES)
-    scan_parser.add_argument("--timeout", type=positive_float)
+    scan_parser.add_argument("--timeout", type=positive_float, help="Overall scan budget in seconds.")
+    scan_parser.add_argument("--io-timeout", default=30.0, type=positive_float, help="Maximum seconds per scan filesystem operation.")
     scan_parser.add_argument("--limit", type=positive_int)
 
     copy_parser = subparsers.add_parser("copy", help="Copy files recorded in the manifest.")
@@ -143,8 +144,10 @@ def main(argv: list[str] | None = None) -> int:
             if summary.failed:
                 return 1
         elif args.command == "scan":
-            summary = scan_job(args.job_dir, phase=args.phase, limit=args.limit, timeout=args.timeout)
+            summary = scan_job(args.job_dir, phase=args.phase, limit=args.limit, timeout=args.timeout, io_timeout=args.io_timeout)
             print(summary.as_line())
+            if summary.issues:
+                return 1
         elif args.command in {"copy", "resume"}:
             summary = copy_job(
                 args.job_dir,
