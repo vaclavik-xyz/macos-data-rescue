@@ -126,7 +126,7 @@ def test_next_reports_exhausted_failures_instead_of_retrying_forever(tmp_path: P
 
     assert "action=copy" not in result.stdout
     assert "review:" in result.stdout
-    assert "failed/timed_out after retries" in result.stdout
+    assert "exhausted retries or unreadable compression" in result.stdout
 
 
 def test_next_guides_restore_job_to_verification(tmp_path: Path) -> None:

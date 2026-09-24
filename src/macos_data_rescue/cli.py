@@ -24,6 +24,7 @@ PHASES = (
     "photos",
     "library",
     "restore",
+    "volume",
     "all",
 )
 
@@ -39,7 +40,10 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--job-dir", required=True, type=Path)
     init_parser.add_argument("--source", required=True, type=Path)
     init_parser.add_argument("--dest", required=True, type=Path)
-    init_parser.add_argument("--profile", default="customer-home", choices=("customer-home", "restore"))
+    init_parser.add_argument("--profile", default="customer-home", choices=("customer-home", "restore", "volume"))
+
+    init_parser.add_argument("--exclude", action="append", default=[], metavar="PATTERN",
+                             help="Volume profile only: exclude a source-relative glob (repeatable).")
 
     preflight_parser = subparsers.add_parser(
         "preflight",
@@ -96,6 +100,8 @@ def add_copy_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--phase", default="all", choices=PHASES)
     parser.add_argument("--timeout", default=30.0, type=positive_float)
     parser.add_argument("--limit", type=positive_int)
+    parser.add_argument("--path", help="Failed manifest path to recover from an explicitly selected duplicate.")
+    parser.add_argument("--fallback-from", help="Alternate source-relative file; requires --path.")
 
 
 def positive_float(value: str) -> float:
@@ -117,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
-            config = init_manifest(args.job_dir, args.source, args.dest, args.profile)
+            config = init_manifest(args.job_dir, args.source, args.dest, args.profile, excludes=tuple(args.exclude))
             print(f"initialized job={config.job_dir} source={config.source} dest={config.dest}")
         elif args.command == "preflight":
             summary = preflight_job(args.job_dir, args.source, args.dest)
@@ -134,6 +140,8 @@ def main(argv: list[str] | None = None) -> int:
                 phase=args.phase,
                 timeout=args.timeout,
                 limit=args.limit,
+                path=args.path,
+                fallback_from=args.fallback_from,
             )
             print(summary.as_line())
         elif args.command == "status":

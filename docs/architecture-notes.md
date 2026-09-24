@@ -33,3 +33,41 @@ The MVP now ships:
 1. Add destination free-space preflight with a conservative operator-facing warning before long copy runs.
 2. Add timeout-guarded or interrupt-friendly scanning for severely failing disks where `os.walk`/`stat` can hang before copy starts.
 3. Consider explicit retry policy flags for failed/timed-out rows after the MVP stabilizes.
+
+## Review corrections (2026-09-24)
+
+- Existing jobs keep their source, destination, profile, and creation time.
+  Use a new job directory for a different source or destination.
+- Job and destination must be disjoint. A destination must not contain the
+  source; application scans also validate their additional source roots.
+- Scan and copy writers use an advisory job lock. Do not run another tool
+  that changes the source or destination while a rescue is running.
+- Scan access errors stop the command without marking coverage complete.
+  Committed batches remain copyable; correct access and repeat the scan.
+- Cleanup only removes temporary files registered by this job with matching
+  device/inode. Old unregistered `.rescue-tmp` files require technician review;
+  filenames alone cannot distinguish leftovers from customer content.
+- Rescanning unchanged rows retains copy warnings; changed content/kind/source
+  resets retry attempts. Customer reports describe the recorded files and do
+  not certify complete source coverage.
+
+## Recovery outcomes and compression metadata
+
+Issue #2 adds the `volume` profile and explicit per-row duplicate recovery.
+Fallback provenance stays separate from `source_path` (which maps application
+archive paths): `fallback_source_path` is source-relative and never changes
+the destination. The original manifest size remains the byte-count contract;
+`fallback_mtime_ns` is used only for verifying the resulting destination on
+resume. An unchanged rescan preserves this provenance; changed original
+content resets it. Equal byte count is not a content-identity check.
+
+Compression diagnosis runs after an ENOTSUP source read in the timed worker.
+`UF_COMPRESSED` plus missing/unreadable `com.apple.decmpfs` yields
+`unreadable-compressed-flag`. Normal xattr enumeration may hide compression
+metadata, so diagnosis explicitly uses `XATTR_SHOWCOMPRESSION` (0x0020),
+per [Apple's xattr.h](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/xattr.h).
+See also [Apple's compression implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/decmpfs.c).
+Decoded output deliberately does not receive `com.apple.decmpfs` or the
+compressed flag. Tests include a real healthy macOS compressed fixture;
+missing-metadata ENOTSUP failures are injected without modifying a customer
+volume. Physically damaged HFS+ media are not part of automated testing.

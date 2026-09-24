@@ -310,3 +310,15 @@ def test_customer_pdf_breakdown_includes_more_than_twelve_rows(tmp_path: Path) -
     pdf_bytes = (tmp_path / "recovery-report.pdf").read_bytes()
     assert b"Folder13" in pdf_bytes
     assert b"Area13" in pdf_bytes
+
+
+def test_pdf_section_stays_with_its_first_table_row():
+    from macos_data_rescue.reporting import PdfCanvas
+
+    canvas = PdfCanvas()
+    canvas.y = 110
+    canvas.section('Library data')
+    canvas.table(('Area', 'Files'), (('Caches', '1'),), (330, 120))
+    assert len(canvas.pages) == 2
+    assert 'Library data' in '\n'.join(canvas.pages[1])
+    assert 'Caches' in '\n'.join(canvas.pages[1])

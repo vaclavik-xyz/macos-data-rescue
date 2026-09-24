@@ -147,7 +147,7 @@ def test_resumed_scan_timeout_checks_skipped_cursor_items(tmp_path: Path, monkey
     finally:
         conn.close()
 
-    def slow_files(source_path: Path, *, phase: str):
+    def slow_files(source_path: Path, *, phase: str, excludes=()):
         for name in ("skip-1.txt", "skip-2.txt", "cursor.txt", "after.txt"):
             time.sleep(0.02)
             yield ScannedFile(
@@ -196,7 +196,7 @@ def test_stale_cursor_restart_keeps_original_scan_deadline(tmp_path: Path, monke
 
     calls = 0
 
-    def files(source_path: Path, *, phase: str):
+    def files(source_path: Path, *, phase: str, excludes=()):
         nonlocal calls
         calls += 1
         name = "before.txt" if calls == 1 else "after.txt"
@@ -231,7 +231,7 @@ def test_scan_timeout_commits_partial_manifest(tmp_path: Path, monkeypatch) -> N
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
     run_cli("approve", "--job-dir", str(job_dir), "--phase", "library")
 
-    def slow_files(source_path: Path, *, phase: str):
+    def slow_files(source_path: Path, *, phase: str, excludes=()):
         for index in range(5):
             time.sleep(0.02)
             yield ScannedFile(
@@ -716,7 +716,7 @@ def test_restore_scan_rejects_explicit_phase(tmp_path: Path) -> None:
         result = run_cli("scan", "--job-dir", str(job_dir), "--phase", phase, check=False)
 
         assert result.returncode == 1
-        assert "restore profile scans the whole rescued tree" in result.stderr
+        assert "restore profile scans the whole source tree" in result.stderr
 
 
 def test_customer_scan_rejects_restore_phase(tmp_path: Path) -> None:

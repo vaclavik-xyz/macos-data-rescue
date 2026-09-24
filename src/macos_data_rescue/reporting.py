@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import cast
 
 from .errors import RescueError
-from .manifest import all_files, load_config, migrate_manifest, status_summary
+from .manifest import COPIED_STATUSES, UNREADABLE_COMPRESSED, all_files, is_same_or_inside, load_config, migrate_manifest, status_summary, volume_root_for_home
 
 
-STATUSES = ("pending", "copying", "copied", "failed", "timed_out", "skipped")
+STATUSES = ("pending", "copying", *COPIED_STATUSES, "failed", "timed_out", UNREADABLE_COMPRESSED, "skipped")
 CUSTOMER_REPORT_LANGUAGES = ("en", "cs")
 WARNINGS = (
     {
@@ -62,6 +62,10 @@ class CustomerReportText:
     count: str
     copied_files: str
     copying_files: str
+    fallback_files: str
+    compressed_files: str
+    compressed_note: str
+    fallback_note: str
     failed_files: str
     timed_out_files: str
     pending_files: str
@@ -108,12 +112,19 @@ CUSTOMER_REPORT_TEXT = {
         summary="Summary",
         recovery_source="Recovery source",
         recovery_destination="Recovery destination",
-        complete_sentence="The recovery completed with no failed or timed-out files recorded by the rescue tool.",
+        complete_sentence="All recorded files have been processed. This does not certify complete source coverage.",
         unresolved_sentence="The recovery completed with unresolved files recorded by the rescue tool.",
         result="Result",
         count="Count",
         copied_files="Copied files",
         copying_files="Copying files",
+        fallback_files="Recovered from an alternate source (included above)",
+        compressed_files="Unreadable compressed files",
+        compressed_note=("Unreadable compressed files failed with ENOTSUP: their compressed content is not "
+                         "addressable on the mounted source and compression metadata is missing or unreadable. "
+                         "This status does not diagnose bad sectors or an iCloud placeholder."),
+        fallback_note=("Alternate-source recovery uses a technician-selected duplicate and verifies the byte count. "
+                       "Equal size alone does not prove identical content; provenance is in the technician report."),
         failed_files="Failed files",
         timed_out_files="Timed-out files",
         pending_files="Pending files",
@@ -121,9 +132,9 @@ CUSTOMER_REPORT_TEXT = {
         copied_data_recorded="Copied data recorded in the manifest",
         what_recovered="What Was Recovered",
         what_recovered_body=(
-            "The recovered folder contains the customer's selected home-folder data, "
-            "including visible home folders, hidden home-folder items, and any selected "
-            "application data phases that were copied for this job."
+            "The recovered folder contains the files copied from the selected source "
+            "within this job's profile and exclusions. Empty directories and symbolic "
+            "links are not recreated."
         ),
         destination_intro="The destination folder is:",
         breakdown="Recovered Data Breakdown",
@@ -161,7 +172,7 @@ CUSTOMER_REPORT_TEXT = {
         practical_note="This is a practical file-level recovery copy, not a forensic disk image.",
         detailed_reports="Detailed Reports",
         detailed_reports_intro="Detailed technician reports can be generated with:",
-        status_complete_title="Recovery complete",
+        status_complete_title="Recorded files processed",
         status_unresolved_title="Recovery has unresolved files",
         status_complete_body="No failed, timed-out, pending, or interrupted files are recorded.",
         status_unresolved_body="Some files need technician review. See the detailed report for exact paths.",
@@ -179,12 +190,19 @@ CUSTOMER_REPORT_TEXT = {
         summary="Souhrn",
         recovery_source="Zdroj obnovy",
         recovery_destination="Cíl obnovy",
-        complete_sentence="Záchrana byla dokončena; nástroj neeviduje žádné neúspěšné soubory ani soubory po timeoutu.",
+        complete_sentence="Všechny evidované soubory byly zpracovány. To nepotvrzuje úplnost prohledání zdroje.",
         unresolved_sentence="Záchrana obsahuje nedořešené soubory evidované nástrojem.",
         result="Výsledek",
         count="Počet",
         copied_files="Zkopírované soubory",
         copying_files="Rozpracované soubory",
+        fallback_files="Obnoveno z náhradního zdroje (zahrnuto výše)",
+        compressed_files="Nečitelné komprimované soubory",
+        compressed_note=("Nečitelné komprimované soubory skončily chybou ENOTSUP: jejich obsah není na připojeném "
+                         "zdroji dostupný a metadata komprese chybí nebo nejsou čitelná. "
+                         "Tento stav neurčuje vadné sektory ani iCloud placeholder."),
+        fallback_note=("Obnova z náhradního zdroje používá duplikát vybraný technikem a kontroluje počet bajtů. "
+                       "Shodná velikost sama nedokazuje shodný obsah; původ kopie uvádí technický report."),
         failed_files="Neúspěšné soubory",
         timed_out_files="Soubory po timeoutu",
         pending_files="Čekající soubory",
@@ -192,9 +210,9 @@ CUSTOMER_REPORT_TEXT = {
         copied_data_recorded="Zkopírovaná data evidovaná v manifestu",
         what_recovered="Co bylo zachráněno",
         what_recovered_body=(
-            "Cílová složka obsahuje vybraná data z domovské složky zákazníka, "
-            "včetně viditelných složek, skrytých položek v domovské složce "
-            "a vybraných aplikačních dat zkopírovaných pro tuto zakázku."
+            "Cílová složka obsahuje zkopírované soubory z vybraného zdroje podle "
+            "profilu a výjimek této zakázky. Prázdné adresáře a symbolické odkazy "
+            "se neobnovují."
         ),
         destination_intro="Cílová složka je:",
         breakdown="Přehled zachráněných dat",
@@ -233,7 +251,7 @@ CUSTOMER_REPORT_TEXT = {
         practical_note="Toto je praktická souborová záchrana dat, ne forenzní obraz disku.",
         detailed_reports="Detailní reporty",
         detailed_reports_intro="Detailní technické reporty lze vygenerovat příkazy:",
-        status_complete_title="Záchrana dokončena",
+        status_complete_title="Evidované soubory zpracovány",
         status_unresolved_title="Záchrana má nedořešené soubory",
         status_complete_body="Nejsou evidované žádné neúspěšné, timeoutované, čekající ani přerušené soubory.",
         status_unresolved_body="Některé soubory vyžadují kontrolu technikem. Přesné cesty jsou v detailním reportu.",
@@ -310,8 +328,12 @@ def write_customer_report(
         stem = "recovery-report" if language == "en" else f"recovery-report-{language}"
         output_path = config.dest.parent / f"{stem}.{suffix}"
     output_path = output_path.resolve(strict=False)
-    if output_path == config.source or config.source in output_path.parents:
+    if is_same_or_inside(output_path, config.source):
         raise RescueError(f"customer report output must not be inside source: {output_path}")
+    if config.profile == "customer-home":
+        for root in (config.source / "Applications", volume_root_for_home(config.source) / "Applications"):
+            if is_same_or_inside(output_path, root.resolve(strict=False)):
+                raise RescueError(f"customer report output must not be inside application source: {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     markdown = customer_markdown_report(job_dir, report_text)
     if report_format == "markdown":
@@ -340,6 +362,7 @@ def report_payload(job_dir: Path) -> dict[str, object]:
             "source": str(config.source),
             "dest": str(config.dest),
             "profile": config.profile,
+            "excludes": list(config.excludes),
         },
         "summary": normalized_summary(job_dir),
         "warnings": list(WARNINGS),
@@ -379,6 +402,9 @@ def markdown_report(job_dir: Path) -> str:
             if 0 < item["copied_bytes"] != item["size"]
             else ""
         )
+        if item.get("fallback_source_path"):
+            error += f" - fallback source: `{item['fallback_source_path']}`"
+            error += f" - original error: {item.get('fallback_original_error') or 'not recorded'}"
         warning = f" - WARNING: {item['warning']}" if item["warning"] else ""
         lines.append(
             f"- `{item['relative_path']}` - {item['status']} - {item['size']} bytes{copied}{error}{warning}"
@@ -394,12 +420,14 @@ def customer_markdown_report(job_dir: Path, text: CustomerReportText | None = No
     rows = all_files(job_dir)
     breakdown = recovered_top_level_breakdown(rows)
     library_breakdown = recovered_library_breakdown(rows)
-    copied_bytes = summary["copied"]["bytes"]
+    copied_bytes = recovered_total(summary, "bytes")
     failed = summary["failed"]["count"]
     timed_out = summary["timed_out"]["count"]
     pending = summary["pending"]["count"]
     copying = summary["copying"]["count"]
-    unresolved = failed + timed_out + pending + copying
+    compressed = summary[UNREADABLE_COMPRESSED]["count"]
+    fallback = summary["copied_from_fallback"]["count"]
+    unresolved = failed + timed_out + pending + copying + compressed
     lines = [
         f"# {text.title}",
         "",
@@ -422,7 +450,9 @@ def customer_markdown_report(job_dir: Path, text: CustomerReportText | None = No
             "",
             f"| {text.result} | {text.count} |",
             "| --- | ---: |",
-            f"| {text.copied_files} | {summary['copied']['count']} |",
+            f"| {text.copied_files} | {recovered_total(summary, 'count')} |",
+            f"| {text.fallback_files} | {fallback} |",
+            f"| {text.compressed_files} | {compressed} |",
             f"| {text.copying_files} | {copying} |",
             f"| {text.failed_files} | {failed} |",
             f"| {text.timed_out_files} | {timed_out} |",
@@ -488,6 +518,8 @@ def customer_markdown_report(job_dir: Path, text: CustomerReportText | None = No
             f"- {text.metadata_note}",
             f"- {text.icloud_note}",
             f"- {text.practical_note}",
+            *([f"- {text.compressed_note}"] if compressed else []),
+            *([f"- {text.fallback_note}"] if fallback else []),
             "",
             f"## {text.detailed_reports}",
             "",
@@ -510,7 +542,9 @@ def customer_pdf_bytes(job_dir: Path, text: CustomerReportText | None = None) ->
     timed_out = summary["timed_out"]["count"]
     pending = summary["pending"]["count"]
     copying = summary["copying"]["count"]
-    unresolved = failed + timed_out + pending + copying
+    compressed = summary[UNREADABLE_COMPRESSED]["count"]
+    fallback = summary["copied_from_fallback"]["count"]
+    unresolved = failed + timed_out + pending + copying + compressed
     canvas = PdfCanvas()
     canvas.header(text.title, text.subtitle)
     canvas.status_card(
@@ -520,8 +554,8 @@ def customer_pdf_bytes(job_dir: Path, text: CustomerReportText | None = None) ->
     )
     canvas.metric_cards(
         (
-            (text.copied_files, str(summary["copied"]["count"])),
-            (text.copied_data_metric, format_size(summary["copied"]["bytes"])),
+            (text.copied_files, str(recovered_total(summary, "count"))),
+            (text.copied_data_metric, format_size(recovered_total(summary, "bytes"))),
             (text.unresolved_metric, str(unresolved)),
         )
     )
@@ -533,7 +567,9 @@ def customer_pdf_bytes(job_dir: Path, text: CustomerReportText | None = None) ->
     canvas.table(
         (text.result, text.count),
         (
-            (text.copied_files, str(summary["copied"]["count"])),
+            (text.copied_files, str(recovered_total(summary, "count"))),
+            (text.fallback_files, str(fallback)),
+            (text.compressed_files, str(compressed)),
             (text.copying_files, str(copying)),
             (text.failed_files, str(failed)),
             (text.timed_out_files, str(timed_out)),
@@ -561,6 +597,10 @@ def customer_pdf_bytes(job_dir: Path, text: CustomerReportText | None = None) ->
     canvas.bullet(text.metadata_note)
     canvas.bullet(text.icloud_note)
     canvas.bullet(text.practical_note)
+    if compressed:
+        canvas.bullet(text.compressed_note)
+    if fallback:
+        canvas.bullet(text.fallback_note)
     canvas.footer(text.page)
     return canvas.render()
 
@@ -576,7 +616,7 @@ def recovered_library_breakdown(rows) -> list[tuple[str, int, int]]:
 def aggregate_copied_rows(rows, label_for) -> list[tuple[str, int, int]]:
     totals: dict[str, list[int]] = {}
     for row in rows:
-        if row["status"] != "copied":
+        if row["status"] not in COPIED_STATUSES:
             continue
         label = label_for(str(row["relative_path"]))
         if label is None:
@@ -660,7 +700,8 @@ class PdfCanvas:
         self.y = top - 82
 
     def section(self, title: str) -> None:
-        self.ensure(34)
+        # Keep the heading with at least a table header and its first row.
+        self.ensure(80)
         self.text(self.margin, self.y, title, "F2", 14, (0.12, 0.25, 0.38))
         self.line(self.margin, self.y - 7, self.margin + self.body_width, self.y - 7, (0.78, 0.84, 0.90))
         self.y -= 25
@@ -724,11 +765,12 @@ class PdfCanvas:
             x += width
 
     def paragraph(self, text: str) -> None:
+        self.ensure(len(wrap_pdf_lines([text], max_chars_for_width(self.body_width, 10))) * 13 + 6)
         consumed = self.wrapped_text(self.margin, self.y, text, 10, self.body_width)
         self.y -= consumed + 6
 
     def bullet(self, text: str) -> None:
-        self.ensure(24)
+        self.ensure(len(wrap_pdf_lines([text], max_chars_for_width(self.body_width - 16, 10))) * 13 + 5)
         self.text(self.margin, self.y, "*", "F2", 10, (0.12, 0.25, 0.38))
         consumed = self.wrapped_text(self.margin + 16, self.y, text, 10, self.body_width - 16)
         self.y -= consumed + 5
@@ -969,6 +1011,10 @@ def format_size(bytes_count: int) -> str:
     raise AssertionError("unreachable")
 
 
+def recovered_total(summary: dict[str, dict[str, int]], field: str) -> int:
+    return sum(summary[status][field] for status in COPIED_STATUSES)
+
+
 def normalized_summary(job_dir: Path) -> dict[str, dict[str, int]]:
     summary = status_summary(job_dir)
     return {status: summary.get(status, {"count": 0, "bytes": 0}) for status in STATUSES}
@@ -989,4 +1035,7 @@ def row_to_dict(row) -> dict[str, object]:
     }
     if "source_path" in row.keys() and row["source_path"]:
         item["source_path"] = row["source_path"]
+    for key in ("fallback_source_path", "fallback_mtime_ns", "fallback_original_error"):
+        if key in row.keys() and row[key] is not None:
+            item[key] = row[key]
     return item

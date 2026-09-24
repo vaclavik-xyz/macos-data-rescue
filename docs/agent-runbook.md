@@ -300,8 +300,8 @@ the scan cursor, and `resume` work exactly as in the rescue direction.
 
 - Cross-check the counts once the restore scan has completed (no
   `stopped=` in the output): the total row count in the restore job's
-  `status` (sum of all statuses) must equal the rescue job's `copied=`
-  count — every copied file produced exactly one file in `user-data/`,
+  `status` (sum of all statuses) must equal the rescue job's `copied=` plus `copied_from_fallback=`
+  counts — every copied file produced exactly one file in `user-data/`,
   and skipped rows produced none. A single uninterrupted scan prints the
   same number as `scanned=`; interrupted-and-resumed scans only show it in
   `status`. Investigate any difference — it means files were added to or
@@ -349,3 +349,57 @@ Three supported setups:
   `status` and `report --format markdown` output of the restore job to the
   service notes as evidence that every rescued file reached the new disk;
   do not generate `customer-report` from a restore job.
+
+## Non-home source intake and rescue
+
+Use `--profile volume` for an external disk, a bare project/photo folder,
+embedded photo library, or `/Volumes/<Volume>/.Trashes/<uid>`. Confirm the
+exact source and requested exclusions with the operator. The complete
+selected tree is included by default, including caches, Trash and
+`Backups.backupdb`; no home phases or home approval gates apply.
+
+Place `JOB` and `DST` in disjoint directories on the recovery disk. Run
+`preflight`, then `init --profile volume`, `scan` without `--phase`, and
+`copy` (same arguments as the README non-home example). Repeat bounded scans
+after copying committed rows, or follow `next`. Use repeatable
+`init --exclude 'source-relative-glob'` only for explicitly excluded paths;
+patterns and scope are immutable for that job and appear in the JSON report.
+
+Explain before handoff: empty directories and symbolic links are not
+recreated, special files are skipped, and the result is neither a bootable
+volume nor a filesystem image. Check `status` and both reports, sample copied
+files, and review every inaccessible path. A scan access error means coverage
+is incomplete even when all previously recorded files have been copied.
+
+## Compressed read failures and duplicate-assisted recovery
+
+`unreadable-compressed-flag` is a distinct unresolved status: the worker
+received `ENOTSUP` while reading a file with `UF_COMPRESSED` and could not
+read its compression metadata. Healthy compressed files are still copied
+normally. Do not clear flags or remove xattrs on the source, and do not fill
+unreadable input with zeros. This status does not establish bad sectors or
+an iCloud placeholder. `next` asks for manual review rather than prescribing
+repeated retries of this condition.
+
+A technician can explicitly select a known duplicate with:
+
+```bash
+uv run macos-data-rescue copy --job-dir "$JOB" \
+  --path 'original/failed-file.heic' \
+  --fallback-from 'duplicate/readable-file.heic' --timeout 300
+```
+
+Confirm the duplicate's identity independently; matching filename/size alone
+is insufficient. Both paths must be inside this job's source; no symlink
+traversal is accepted for the alternate. Only the named failed row is
+processed. The worker checks its copied byte count against the original
+manifest size and preserves the prior destination if the attempt fails.
+
+Check `status`, JSON and Markdown reports for `copied_from_fallback`,
+`fallback_source_path`, `fallback_original_error`, and `fallback_mtime_ns`.
+A successful alternate is recovered data, not a customer loss; the customer
+report includes it in the recovered count and records the alternate-source
+count. Resume retries the stored alternate after interruption or destination
+loss. When comparing a restore's rows to its source rescue, add `copied` and
+`copied_from_fallback` counts. Failed alternate attempts preserve provenance;
+a later rescan that detects a changed original resets the mapping.

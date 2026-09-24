@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import ctypes
 import os
 import stat
@@ -8,11 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import RescueError
+from .locking import exclusive_job
 from .manifest import (
     GATED_PHASES,
     ScannedFile,
     approval_required_message,
-    clear_scan_cursor,
+    begin_scan,
     load_approval,
     load_config,
     load_scan_cursor,
@@ -20,6 +22,7 @@ from .manifest import (
     migrate_manifest,
     scan_cursor_key,
     upsert_scanned_files,
+    validate_application_layout,
 )
 
 
@@ -115,6 +118,7 @@ class ScanSummary:
         return line
 
 
+@exclusive_job
 def scan_job(
     job_dir: Path,
     *,
@@ -138,12 +142,15 @@ def scan_job(
             )
     if not config.source.exists():
         raise RescueError(f"source does not exist: {config.source}")
+    if scan_phase == "applications":
+        validate_application_layout(config)
     migrate_manifest(job_dir)
     limiter = ScanLimiter(limit=limit, timeout=timeout)
-    cursor = load_scan_cursor(job_dir, scan_phase)
+    cursor = load_scan_cursor(job_dir, scan_phase) or None
+    begin_scan(job_dir, scan_phase)
     count = upsert_scanned_files(
         job_dir,
-        limiter.wrap(iter_source_files(config.source, phase=scan_phase), skip_until_after=cursor),
+        limiter.wrap(iter_source_files(config.source, phase=scan_phase, excludes=config.excludes), skip_until_after=cursor),
         batch_size=batch_size,
         cursor_key=scan_cursor_key(scan_phase),
     )
@@ -151,21 +158,20 @@ def scan_job(
         limiter = ScanLimiter(limit=limit, deadline=limiter.deadline)
         count = upsert_scanned_files(
             job_dir,
-            limiter.wrap(iter_source_files(config.source, phase=scan_phase)),
+            limiter.wrap(iter_source_files(config.source, phase=scan_phase, excludes=config.excludes)),
             batch_size=batch_size,
             cursor_key=scan_cursor_key(scan_phase),
         )
     if limiter.stopped is None:
-        clear_scan_cursor(job_dir, scan_phase)
         mark_scan_complete(job_dir, scan_phase)
     return ScanSummary(scanned=count, stopped=limiter.stopped)
 
 
 def resolve_scan_phase(profile: str, phase: str) -> str:
-    if profile == "restore":
+    if profile in {"restore", "volume"}:
         if phase != "all":
-            raise RescueError("restore profile scans the whole rescued tree; omit --phase")
-        return "restore"
+            raise RescueError(f"{profile} profile scans the whole source tree; omit --phase")
+        return profile
     if profile != "customer-home":
         raise RescueError(f"unsupported profile: {profile}")
     if phase == "restore":
@@ -216,7 +222,7 @@ class ScanLimiter:
             self.scanned += 1
 
 
-def iter_source_files(source: Path, *, phase: str = "all"):
+def iter_source_files(source: Path, *, phase: str = "all", excludes: tuple[str, ...] = ()):
     if phase == "applications":
         for scan_root, dest_prefix in application_scan_roots(source):
             if scan_root.is_symlink():
@@ -233,11 +239,11 @@ def iter_source_files(source: Path, *, phase: str = "all"):
             if entry is not None:
                 yield entry
             continue
-        yield from iter_tree(source, scan_root, phase)
+        yield from iter_tree(source, scan_root, phase, excludes=excludes)
 
 
 def scan_roots(source: Path, phase: str) -> tuple[Path, ...]:
-    if phase in {"all", "visible-home", "hidden-home", "full-home", "restore"}:
+    if phase in {"all", "visible-home", "hidden-home", "full-home", "restore", "volume"}:
         return (source,)
     if phase == "app-data":
         library = source / "Library"
@@ -273,8 +279,10 @@ def application_scan_roots(source: Path) -> tuple[tuple[Path, str], ...]:
 def is_directory_or_symlink(path: Path) -> bool:
     try:
         info = path.stat(follow_symlinks=False)
-    except OSError:
+    except FileNotFoundError:
         return False
+    except OSError as exc:
+        scan_error(exc)
     return stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
 
 
@@ -288,8 +296,12 @@ def volume_root_for_home(source: Path) -> Path:
     return source.parent
 
 
-def iter_tree(source: Path, scan_root: Path, phase: str):
-    for root, dirs, files in os.walk(scan_root, topdown=True, followlinks=False):
+def scan_error(exc: OSError) -> None:
+    raise RescueError(f"scan incomplete: {exc}; fix source access and repeat scan") from exc
+
+
+def iter_tree(source: Path, scan_root: Path, phase: str, *, excludes: tuple[str, ...] = ()):
+    for root, dirs, files in os.walk(scan_root, topdown=True, followlinks=False, onerror=scan_error):
         root_path = Path(root)
         dirs.sort()
         files.sort()
@@ -297,6 +309,8 @@ def iter_tree(source: Path, scan_root: Path, phase: str):
         for dirname in dirs:
             path = root_path / dirname
             rel_parts = relative_parts(source, path)
+            if matches_exclude(rel_parts, excludes):
+                continue
             # os.walk classifies symlinks to directories as dirs; record them
             # like file symlinks so the manifest shows they existed, but never
             # descend into them. should_descend also matters: for app-data a
@@ -317,12 +331,14 @@ def iter_tree(source: Path, scan_root: Path, phase: str):
         for filename in files:
             path = root_path / filename
             rel_parts = relative_parts(source, path)
+            if matches_exclude(rel_parts, excludes):
+                continue
             if not should_include_file(rel_parts, phase):
                 continue
             try:
                 info = path.stat(follow_symlinks=False)
-            except OSError:
-                continue
+            except OSError as exc:
+                scan_error(exc)
             yield ScannedFile(
                 relative_path="/".join(rel_parts),
                 size=info.st_size,
@@ -335,7 +351,7 @@ def iter_tree(source: Path, scan_root: Path, phase: str):
 
 
 def iter_application_tree(scan_root: Path, dest_prefix: str):
-    for root, dirs, files in os.walk(scan_root, topdown=True, followlinks=False):
+    for root, dirs, files in os.walk(scan_root, topdown=True, followlinks=False, onerror=scan_error):
         root_path = Path(root)
         dirs.sort()
         files.sort()
@@ -351,8 +367,8 @@ def iter_application_tree(scan_root: Path, dest_prefix: str):
             path = root_path / filename
             try:
                 info = path.stat(follow_symlinks=False)
-            except OSError:
-                continue
+            except OSError as exc:
+                scan_error(exc)
             rel = Path(dest_prefix) / path.relative_to(scan_root)
             rel_parts = rel.parts
             yield ScannedFile(
@@ -376,8 +392,8 @@ def scanned_symlink(
 ) -> ScannedFile | None:
     try:
         info = path.stat(follow_symlinks=False)
-    except OSError:
-        return None
+    except OSError as exc:
+        scan_error(exc)
     return ScannedFile(
         relative_path="/".join(rel_parts),
         source_path=source_path,
@@ -392,6 +408,12 @@ def scanned_symlink(
 
 def relative_parts(source: Path, path: Path) -> tuple[str, ...]:
     return path.relative_to(source).parts
+
+
+def matches_exclude(parts: tuple[str, ...], patterns: tuple[str, ...]) -> bool:
+    # Match the full path and each parent: excluding a directory prunes its tree.
+    return any(fnmatch.fnmatchcase("/".join(parts[:end]), pattern)
+               for end in range(1, len(parts) + 1) for pattern in patterns)
 
 
 def is_excluded(parts: tuple[str, ...]) -> bool:
@@ -410,7 +432,7 @@ def is_excluded(parts: tuple[str, ...]) -> bool:
 
 
 def should_descend(parts: tuple[str, ...], phase: str) -> bool:
-    if phase == "restore":
+    if phase in {"restore", "volume"}:
         return True
     if is_excluded(parts):
         return False
@@ -428,7 +450,7 @@ def should_descend(parts: tuple[str, ...], phase: str) -> bool:
 
 
 def should_include_file(parts: tuple[str, ...], phase: str) -> bool:
-    if phase == "restore":
+    if phase in {"restore", "volume"}:
         return True
     if is_excluded(parts):
         return False
@@ -493,8 +515,8 @@ def is_real_directory(path: Path) -> bool:
 
 
 def manifest_phase_for(parts: tuple[str, ...], requested_phase: str) -> str:
-    if requested_phase == "restore":
-        return "restore"
+    if requested_phase in {"restore", "volume"}:
+        return requested_phase
     if requested_phase in CUSTOMER_PHASES:
         return requested_phase
     return phase_for(parts)

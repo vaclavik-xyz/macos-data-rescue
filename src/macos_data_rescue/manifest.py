@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import shlex
 import sqlite3
 from dataclasses import dataclass
@@ -13,6 +14,8 @@ from .errors import RescueError
 
 MANIFEST_NAME = "manifest.sqlite"
 WARNING_UNCHANGED = object()
+UNREADABLE_COMPRESSED = "unreadable-compressed-flag"
+COPIED_STATUSES = ("copied", "copied_from_fallback")
 GATED_PHASES = ("app-data", "applications", "full-home", "library")
 
 
@@ -22,6 +25,7 @@ class JobConfig:
     source: Path
     dest: Path
     profile: str
+    excludes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -93,12 +97,21 @@ def create_schema(conn: sqlite3.Connection) -> None:
             updated_at text not null
         );
 
+        create table if not exists temporary_files (
+            path text primary key,
+            device integer not null,
+            inode integer not null
+        );
+
         create index if not exists idx_files_phase_status on files(phase, status);
         create index if not exists idx_files_status on files(status);
         """
     )
     ensure_column(conn, "files", "source_path", "text")
     ensure_column(conn, "files", "warning", "text")
+    for column, definition in (("fallback_source_path", "text"), ("fallback_mtime_ns", "integer"),
+                               ("fallback_original_error", "text")):
+        ensure_column(conn, "files", column, definition)
 
 
 def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -155,7 +168,12 @@ def volume_root_for_home(source: Path) -> Path:
     return source.parent
 
 
-def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobConfig:
+def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str, *, excludes: tuple[str, ...] = ()) -> JobConfig:
+    excludes = tuple(pattern.rstrip("/") for pattern in excludes)
+    if excludes and profile != "volume":
+        raise RescueError("custom excludes require --profile volume")
+    if any(not pattern or pattern.startswith("/") or ".." in pattern.split("/") for pattern in excludes):
+        raise RescueError("exclude patterns must be nonempty and relative to source")
     if not source.exists() or not source.is_dir():
         raise RescueError(f"source must be an existing directory: {source}")
     source_resolved = source.resolve()
@@ -164,6 +182,7 @@ def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobC
     for label, candidate in (("job-dir", job_resolved), ("dest", dest_resolved)):
         if is_same_or_inside(candidate, source_resolved):
             raise RescueError(f"{label} must not be inside source: {candidate}")
+    validate_path_layout(source_resolved, dest_resolved, job_resolved)
     existing_profile = existing_job_profile(job_dir)
     if existing_profile is not None and existing_profile != profile:
         # Changing the profile of an existing job would move its rows between
@@ -173,6 +192,13 @@ def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobC
             f"job already initialized with profile {existing_profile}; "
             f"refusing to change it to {profile}"
         )
+    if manifest_path(job_dir).exists():
+        existing = load_config(job_dir)
+        if existing.source != source_resolved or existing.dest != dest_resolved:
+            raise RescueError("job already initialized; source and dest cannot change; create a new job")
+        if existing.excludes != excludes:
+            raise RescueError("job already initialized; excludes cannot change; create a new job")
+        return existing
     job_dir.mkdir(parents=True, exist_ok=True)
     db_path = manifest_path(job_dir)
     conn = sqlite3.connect(db_path)
@@ -185,6 +211,7 @@ def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobC
             "source": str(source_resolved),
             "dest": str(dest_resolved),
             "profile": profile,
+            "excludes": json.dumps(excludes),
             "created_at": now,
             "updated_at": now,
         }
@@ -198,7 +225,7 @@ def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobC
         conn.commit()
     finally:
         conn.close()
-    return JobConfig(job_dir=job_dir, source=source_resolved, dest=dest_resolved, profile=profile)
+    return JobConfig(job_dir=job_dir, source=source_resolved, dest=dest_resolved, profile=profile, excludes=excludes)
 
 
 def existing_job_profile(job_dir: Path) -> str | None:
@@ -260,12 +287,42 @@ def load_config(job_dir: Path) -> JobConfig:
     for label, candidate in (("job-dir", job_resolved), ("dest", dest)):
         if is_same_or_inside(candidate, source):
             raise RescueError(f"{label} must not be inside source: {candidate}")
+    validate_path_layout(source, dest, job_resolved)
     return JobConfig(
         job_dir=job_dir,
         source=source,
         dest=dest,
         profile=values["profile"],
+        excludes=tuple(json.loads(values.get("excludes", "[]"))),
     )
+
+
+def validate_path_layout(source: Path, dest: Path, job_dir: Path) -> None:
+    # Ancestor destinations can mirror a relative path back into the source.
+    if is_same_or_inside(source, dest):
+        raise RescueError("dest must not contain source")
+    if is_same_or_inside(job_dir, dest) or is_same_or_inside(dest, job_dir):
+        raise RescueError("job-dir and dest must not overlap")
+
+
+def validate_application_layout(config: JobConfig) -> None:
+    for root in (volume_root_for_home(config.source) / "Applications", config.source / "Applications"):
+        if root.is_symlink() or not root.is_dir():
+            continue
+        root = root.resolve()
+        for label, target in (("dest", config.dest), ("job-dir", config.job_dir.resolve())):
+            if is_same_or_inside(target, root) or is_same_or_inside(root, target):
+                raise RescueError(f"{label} overlaps application source: {root}")
+
+
+def begin_scan(job_dir: Path, phase: str) -> None:
+    conn = connect(job_dir)
+    try:
+        conn.execute("delete from config where key = ?", (scan_done_key(phase),))
+        conn.execute("insert or ignore into config(key, value) values(?, '')", (scan_cursor_key(phase),))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def scan_cursor_key(phase: str) -> str:
@@ -310,6 +367,7 @@ def load_approval(job_dir: Path, phase: str) -> str | None:
 
 
 def record_approval(job_dir: Path, phase: str, by: str | None = None) -> str:
+    load_config(job_dir)
     value = utc_now()
     if by:
         value += f" by={by}"
@@ -378,6 +436,7 @@ def mark_scan_complete(job_dir: Path, phase: str) -> None:
             """,
             (scan_done_key(phase), utc_now()),
         )
+        conn.execute("delete from config where key = ?", (scan_cursor_key(phase),))
         commit_scan_batch(conn)
     finally:
         conn.close()
@@ -401,7 +460,7 @@ def upsert_scanned_files(
             now = utc_now()
             existing = conn.execute(
                 """
-                select size, mtime_ns, status, error, copied_bytes, started_at, finished_at
+                select size, mtime_ns, kind, source_path, warning, attempts, status, error, copied_bytes, started_at, finished_at
                 from files
                 where relative_path = ?
                 """,
@@ -411,7 +470,11 @@ def upsert_scanned_files(
                 existing
                 and existing["size"] == item.size
                 and existing["mtime_ns"] == item.mtime_ns
+                and existing["kind"] == item.kind
+                and existing["source_path"] == item.source_path
             )
+            attempts = existing["attempts"] if keep_status else 0
+            warning = existing["warning"] if keep_status else item.warning
             status = existing["status"] if keep_status else "pending"
             error = existing["error"] if keep_status else None
             copied_bytes = existing["copied_bytes"] if keep_status else 0
@@ -433,6 +496,7 @@ def upsert_scanned_files(
                     kind = excluded.kind,
                     phase = excluded.phase,
                     status = ?,
+                    attempts = ?,
                     error = ?,
                     warning = excluded.warning,
                     copied_bytes = ?,
@@ -451,19 +515,23 @@ def upsert_scanned_files(
                     item.phase,
                     status,
                     error,
-                    item.warning,
+                    warning,
                     copied_bytes,
                     now,
                     started_at,
                     finished_at,
                     now,
                     status,
+                    attempts,
                     error,
                     copied_bytes,
                     started_at,
                     finished_at,
                 ),
             )
+            if not keep_status:
+                conn.execute("update files set fallback_source_path = null, fallback_mtime_ns = null, "
+                             "fallback_original_error = null where relative_path = ?", (item.relative_path,))
             count += 1
             pending += 1
             batch_cursor = item.relative_path
@@ -598,6 +666,7 @@ def mark_result(
     error: str | None = None,
     warning=WARNING_UNCHANGED,
     copied_bytes: int = 0,
+    fallback_mtime_ns: int | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> None:
     owns_conn = conn is None
@@ -632,6 +701,8 @@ def mark_result(
                 """,
                 (status, error, warning, copied_bytes, now, now, file_id),
             )
+        if fallback_mtime_ns is not None:
+            conn.execute("update files set fallback_mtime_ns = ? where id = ?", (fallback_mtime_ns, file_id))
         conn.commit()
     finally:
         if owns_conn:
@@ -645,7 +716,7 @@ def status_summary(job_dir: Path) -> dict[str, dict[str, int]]:
             """
             select status,
                    count(*) as count,
-                   coalesce(sum(case when status = 'copied' then copied_bytes else size end), 0) as bytes
+                   coalesce(sum(case when status in ('copied', 'copied_from_fallback') then copied_bytes else size end), 0) as bytes
             from files
             group by status
             order by status
