@@ -69,3 +69,8 @@ same name and size. Results include an explicit `copy --path ... --fallback-from
 ...` command, safely quoted for a shell; they never select or copy automatically.
 Only paths supported by the existing source-relative fallback command are shown.
 Candidates reflect scan-time metadata and may have changed or disappeared.
+
+On a completed retry traversal, previously failed paths no longer enumerated are
+rechecked in the bounded worker. Confirmed absence resolves that coverage issue
+for the current source view; inaccessible paths remain unresolved. This does not
+certify that files formerly present on the original Mac were recovered.

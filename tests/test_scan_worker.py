@@ -64,3 +64,20 @@ def test_overall_deadline_bounds_a_blocked_operation(tmp_path, monkeypatch):
     assert result.stopped == 'timeout'
     assert time.monotonic() - started < 3
     assert config_value(job, 'scan_done:volume') is None
+
+
+def test_vanished_failed_path_is_resolved_on_retry(tmp_path, monkeypatch):
+    job, source = job_fixture(tmp_path)
+    original = ScanWorker.request
+    def denied(worker, operation, path, parts=()):
+        if path == source / 'blocked':
+            return {'error': 'permission denied'}
+        return original(worker, operation, path, parts)
+    with monkeypatch.context() as patch:
+        patch.setattr(ScanWorker, 'request', denied)
+        assert scanner.scan_job(job).issues == 1
+    (source / 'blocked').rename(tmp_path / 'removed-from-source')
+    retry = scanner.scan_job(job)
+    assert retry.issues == 0
+    assert scan_issues(job) == []
+    assert config_value(job, 'scan_done:volume') is not None

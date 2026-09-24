@@ -158,12 +158,13 @@ def scan_job(
     finally:
         conn.close()
     limiter = ScanLimiter(limit=limit, timeout=timeout)
-    cursor = None if scan_issues(job_dir, scan_phase) else (load_scan_cursor(job_dir, scan_phase) or None)
+    previous_issues = tuple(issue["path"] for issue in scan_issues(job_dir, scan_phase))
+    cursor = None if previous_issues else (load_scan_cursor(job_dir, scan_phase) or None)
     begin_scan(job_dir, scan_phase)
     count = upsert_scanned_files(
         job_dir,
         limiter.wrap(iter_source_files(config.source, phase=scan_phase, excludes=config.excludes,
-                                                 io_timeout=io_timeout, deadline=limiter.deadline), skip_until_after=cursor),
+                                                 io_timeout=io_timeout, deadline=limiter.deadline, previous_issues=previous_issues), skip_until_after=cursor),
         batch_size=batch_size,
         cursor_key=scan_cursor_key(scan_phase),
     )
@@ -172,7 +173,7 @@ def scan_job(
         count = upsert_scanned_files(
             job_dir,
             limiter.wrap(iter_source_files(config.source, phase=scan_phase, excludes=config.excludes,
-                                                 io_timeout=io_timeout, deadline=limiter.deadline)),
+                                                 io_timeout=io_timeout, deadline=limiter.deadline, previous_issues=previous_issues)),
             batch_size=batch_size,
             cursor_key=scan_cursor_key(scan_phase),
         )
@@ -248,9 +249,10 @@ class ScanLimiter:
                 iterator.close()
 
 
-def iter_source_files(source: Path, *, phase="all", excludes=(), io_timeout=30, deadline=None):
+def iter_source_files(source: Path, *, phase="all", excludes=(), io_timeout=30, deadline=None, previous_issues=()):
     from .scan_worker import isolated_files
-    yield from isolated_files(source, phase=phase, excludes=excludes, io_timeout=io_timeout, deadline=deadline)
+    yield from isolated_files(source, phase=phase, excludes=excludes, io_timeout=io_timeout, deadline=deadline,
+                              previous_issues=previous_issues)
 
 
 def volume_root_for_home(source: Path) -> Path:

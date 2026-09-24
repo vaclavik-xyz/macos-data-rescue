@@ -99,7 +99,7 @@ def worker_loop(conn):
         conn.close()
 
 
-def isolated_files(source: Path, *, phase: str, excludes=(), io_timeout=30, deadline=None):
+def isolated_files(source: Path, *, phase: str, excludes=(), io_timeout=30, deadline=None, previous_issues=()):
     from .scanner import (IMPORTANT_DIRS, PHOTO_DIRS, file_kind, manifest_phase_for,
                           matches_exclude, should_descend, should_include_file, volume_root_for_home)
     if phase == "applications":
@@ -113,6 +113,7 @@ def isolated_files(source: Path, *, phase: str, excludes=(), io_timeout=30, dead
     else:
         roots = [(source, ())]
     worker = ScanWorker(io_timeout, deadline)
+    unvisited_issues = set(previous_issues)
     # Explicit stack avoids Python recursion limits on deeply nested source trees.
     stack = [(path, parts, True) for path, parts in reversed(roots)]
     try:
@@ -122,6 +123,7 @@ def isolated_files(source: Path, *, phase: str, excludes=(), io_timeout=30, dead
                 continue
             if parts and phase != "applications" and not (should_descend(parts, phase) or should_include_file(parts, phase)):
                 continue
+            unvisited_issues.discard(str(path))
             result = worker.request("stat", path, parts)
             if "error" in result:
                 if optional_root and path != source and result.get("missing"):
@@ -155,6 +157,13 @@ def isolated_files(source: Path, *, phase: str, excludes=(), io_timeout=30, dead
                                   kind=file_kind(info.st_mode), phase=manifest_phase_for(parts, phase),
                                   source_path=str(path) if phase == "applications" else None,
                                   warning=result["warning"])
+        # Previously failed entries may disappear from a successful parent listing.
+        # Recheck only those old paths, in the same bounded worker. A confirmed
+        # absence resolves current coverage; permission errors/timeouts stay visible.
+        for text in sorted(unvisited_issues):
+            result = worker.request("stat", Path(text))
+            if result.get("missing"):
+                yield ScanIssue(text, phase, None)
     except ScanDeadline:
         yield ScanStopped("timeout")
     finally:
