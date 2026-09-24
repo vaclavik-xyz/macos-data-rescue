@@ -3,6 +3,8 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 
+from .activity import activity_snapshot
+
 from .manifest import (
     JobConfig,
     UNREADABLE_COMPRESSED,
@@ -31,6 +33,11 @@ def next_text(job_dir: Path) -> str:
     config = load_config(job_dir)
     stats = phase_stats(job_dir)
     lines = [f"job={job_dir} profile={config.profile}"]
+    activity = activity_snapshot(job_dir)
+    if activity.get("state") == "paused":
+        return "\n".join(lines + [f"state: paused ({activity.get('reason')})",
+                                  "Reconnect the original disks / free destination space, then run:",
+                                  base_cmd("resume", "--job-dir", quoted(job_dir), "--phase", quoted(activity["phase"]))])
     exhausted = sum(int(item["exhausted"]) for item in stats.values())
     if exhausted:
         lines.append(

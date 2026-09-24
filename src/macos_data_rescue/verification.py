@@ -41,6 +41,9 @@ def verify_job(job_dir: Path, *, phase: str = "all", timeout: float = 30,
                 if result.get("sha256") == row["sha256"] and result.get("size") == row["copied_bytes"]:
                     status, error = "verified", None
                     summary.verified += 1
+                elif result.get("status") in ("timed_out", "failed"):
+                    status, error = "unverifiable", str(result.get("error", "Verification worker unavailable"))
+                    summary.unverifiable += 1
                 else:
                     status = "failed"
                     error = str(result.get("error", "Destination SHA256 or size differs from the copied stream."))

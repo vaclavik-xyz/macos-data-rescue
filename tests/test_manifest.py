@@ -255,7 +255,10 @@ def test_manifest_migration_adds_source_path_for_application_rows(tmp_path: Path
     finally:
         conn.close()
 
+    # Status is now read-only; explicit migration still upgrades legacy jobs.
     run_cli("status", "--job-dir", str(job_dir))
+    from macos_data_rescue.manifest import migrate_manifest
+    migrate_manifest(job_dir)
 
     conn = sqlite3.connect(job_dir / "manifest.sqlite")
     conn.row_factory = sqlite3.Row

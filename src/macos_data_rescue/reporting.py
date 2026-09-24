@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import cast
 
+from .activity import activity_snapshot, activity_text
 from .errors import RescueError
 from .manifest import COPIED_STATUSES, UNREADABLE_COMPRESSED, all_files, is_same_or_inside, load_config, migrate_manifest, status_summary, volume_root_for_home
 
@@ -302,10 +303,8 @@ PDF_CUSTOM_CHAR_CODES = {
 
 
 def status_text(job_dir: Path) -> str:
-    load_config(job_dir)
-    migrate_manifest(job_dir)
     summary = normalized_summary(job_dir)
-    return " ".join(f"{status}={summary[status]['count']}" for status in STATUSES)
+    return " ".join(f"{status}={summary[status]['count']}" for status in STATUSES) + activity_text(job_dir)
 
 
 def report(job_dir: Path, report_format: str) -> str:
@@ -366,6 +365,7 @@ def report_payload(job_dir: Path) -> dict[str, object]:
         },
         "summary": normalized_summary(job_dir),
         "verification": verification_counts(rows),
+        "activity": activity_snapshot(job_dir),
         "warnings": list(WARNINGS),
         "files": [row_to_dict(row) for row in rows],
     }

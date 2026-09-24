@@ -60,3 +60,30 @@ def test_destination_symlinks_and_special_files_are_rejected(tmp_path):
     os.mkfifo(root / 'fifo')
     assert 'error' in hash_destination(root, 'fifo')
     assert 'error' in hash_destination(root, '../outside/file')
+
+
+def test_verification_timeout_is_unknown_and_next_file_is_checked(tmp_path, monkeypatch):
+    from macos_data_rescue.copier import CopyWorker
+    job, _, _ = copied_job(tmp_path)
+    monkeypatch.setattr(CopyWorker, 'verify_one', lambda *args: dict(status='timed_out', error='read timed out'))
+    summary = verify_job(job)
+    assert summary.unverifiable == 1 and summary.failed == 0
+    assert file_rows(job)['Documents/file.txt']['verification_status'] == 'unverifiable'
+
+
+def test_verify_restarts_worker_if_send_fails(monkeypatch, tmp_path):
+    from macos_data_rescue.copier import CopyWorker
+    worker = CopyWorker()
+    class BrokenConnection:
+        def send(self, value):
+            raise BrokenPipeError('worker died')
+        def close(self):
+            pass
+    calls = []
+    def start():
+        calls.append(1)
+        worker._conn = BrokenConnection()
+    monkeypatch.setattr(worker, '_ensure_worker', start)
+    result = worker.verify_one(tmp_path, 'a', 1)
+    assert result['status'] == 'failed' and len(calls) == 2
+    worker.close()

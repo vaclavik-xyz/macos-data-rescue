@@ -209,7 +209,9 @@ def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str, *, excl
         conn.execute("PRAGMA busy_timeout = 5000")
         create_schema(conn)
         now = utc_now()
+        from .storage import storage_anchors
         values = {
+            "storage_anchors": json.dumps(storage_anchors(source_resolved, dest_resolved)),
             "source": str(source_resolved),
             "dest": str(dest_resolved),
             "profile": profile,

@@ -22,3 +22,23 @@ unverifiable; verification never rereads the damaged source to manufacture one.
 SHA256 covers file contents, not metadata, source coverage, or whether an explicit
 fallback is truly the same original document. A successful verification describes
 the destination at that time; later changes require another verification.
+
+## Live operation state and storage pauses
+
+`status --job-dir JOB --watch [--interval 1] [--count N]` prints stable text
+snapshots suitable for a terminal or log. Ctrl-C stops only the watcher. Rates
+are averages for this copy invocation, including failed transfer bytes. Remaining
+bytes and ETA cover the known manifest queue in the selected phase, not unscanned
+data. A stopped writer is shown as interrupted; watch never edits the manifest.
+
+Copy exits with code 3 when storage becomes unavailable or destination writes
+report ENOSPC/EDQUOT. It preserves unattempted rows and returns the active file to
+pending without consuming a retry. Reconnect the original disks or free space,
+then use `resume` with the same options. `next` explains the paused state.
+Read-only directory identity probes run in the bounded worker before each file.
+Recorded source/destination ancestor paths and inodes prevent silently recreating
+an absent mount directory. These are practical outage guards, not a volume UUID
+identity certificate: the operator must reconnect the original disks. Keep the
+job directory on a reliable local disk; loss of the job disk itself prevents
+persisting a pause reason. Existing path validation and destination setup still
+involve parent-process filesystem calls and remain subject to kernel I/O hangs.
