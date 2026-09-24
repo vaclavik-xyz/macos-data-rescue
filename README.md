@@ -205,3 +205,36 @@ Before committing: run tests, commit with Conventional Commits, then run:
 roborev wait
 roborev show HEAD
 ```
+
+## Rescue a volume, Trash, or an ordinary folder
+
+Use `--profile volume` for a non-home source such as
+`/Volumes/CustomerDisk`, `/Volumes/CustomerDisk/Projects`, or
+`/Volumes/CustomerDisk/.Trashes/501`. It has one scope and **no default
+excludes**: Trash, caches, `node_modules`, and `Backups.backupdb` are included.
+
+```bash
+SRC="/Volumes/CustomerDisk/.Trashes/501"
+DST="/Volumes/RecoverySSD/Customer/recovered-trash"
+JOB="/Volumes/RecoverySSD/Customer/.trash-rescue"
+uv run macos-data-rescue preflight --job-dir "$JOB" --source "$SRC" --dest "$DST"
+uv run macos-data-rescue init --job-dir "$JOB" --source "$SRC" --dest "$DST" --profile volume
+uv run macos-data-rescue scan --job-dir "$JOB" --timeout 300
+uv run macos-data-rescue copy --job-dir "$JOB" --timeout 300
+uv run macos-data-rescue next --job-dir "$JOB"
+```
+
+Omit `--phase` when scanning. Copy/resume accept `all` or `volume`.
+Per-file timeout, atomic writes, manifests, and scan/copy resume work as for
+home rescues. Existing destination files at matching paths are replaced.
+**Empty directories are not recreated; symlinks and special files are
+recorded and skipped.** Ownership, bootability, and a complete disk image
+are not recreated.
+
+For deliberate exclusions, add repeatable `init --exclude` arguments, e.g.
+`--exclude '.Trashes' --exclude 'Backups.backupdb*'`. Patterns are
+case-sensitive globs against source-relative paths (no leading `/`);
+`*` may match `/`, and a matching directory prunes its entire subtree.
+Exclusions are stored in the job and JSON report and cannot change on
+re-init; start a new job to change scope. Without `--exclude`, every regular
+file is selected. The `restore` profile retains its separate restore meaning.

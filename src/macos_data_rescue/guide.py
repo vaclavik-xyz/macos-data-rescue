@@ -35,8 +35,8 @@ def next_text(job_dir: Path) -> str:
         lines.append(
             f"review: {exhausted} file(s) failed/timed_out after retries; inspect the technician report"
         )
-    if config.profile == "restore":
-        lines.extend(restore_lines(job_dir, stats))
+    if config.profile in {"restore", "volume"}:
+        lines.extend(restore_lines(job_dir, stats, profile=config.profile))
     else:
         lines.extend(customer_lines(job_dir, config, stats))
     return "\n".join(lines)
@@ -112,23 +112,30 @@ def customer_lines(job_dir: Path, config: JobConfig, stats: dict[str, dict[str, 
     return terminal_lines(job_dir, config, stats)
 
 
-def restore_lines(job_dir: Path, stats: dict[str, dict[str, int]]) -> list[str]:
-    item = stats.get("restore")
+def restore_lines(job_dir: Path, stats: dict[str, dict[str, int]], *, profile: str = "restore") -> list[str]:
+    item = stats.get(profile)
     actionable = item["work"] + item["retryable"] if item else 0
     if actionable:
         return action_lines(job_dir, action="copy", rows=actionable)
-    scan_incomplete = load_scan_cursor(job_dir, "restore") is not None or (
-        item is None and load_scan_done(job_dir, "restore") is None
+    scan_incomplete = load_scan_cursor(job_dir, profile) is not None or (
+        item is None and load_scan_done(job_dir, profile) is None
     )
     if scan_incomplete:
         return action_lines(job_dir, action="scan", reason="scan-not-complete")
     if item is not None and item["exhausted"]:
         return [
-            "state: restore-needs-review",
-            "resume would retry the exhausted rows, so the restore is not complete;",
+            f"state: {profile}-needs-review",
+            "resume would retry the exhausted rows; inspect these before handoff:",
             "inspect the technician report and resolve or acknowledge every failed row:",
             f"  {base_cmd('report', '--job-dir', quoted(job_dir), '--format', 'markdown')}"
             f" > {quoted(job_dir / 'report.md')}",
+        ]
+    if profile == "volume":
+        return [
+            "state: volume-copy-complete",
+            "verify the selected scope and sample recovered files before handoff",
+            f"  {base_cmd('status', '--job-dir', quoted(job_dir))}",
+            *missing_report_cmds(job_dir, load_config(job_dir)),
         ]
     return [
         "state: restore-copy-complete",
@@ -222,7 +229,7 @@ def missing_job_text(job_dir: Path) -> str:
             "run:",
             f"  {base_cmd('preflight', '--job-dir', job_quoted)} --source SOURCE --dest DEST",
             f"  {base_cmd('init', '--job-dir', job_quoted)} --source SOURCE --dest DEST",
-            "add --profile restore for a restore job, then run next again",
+            "add --profile restore for a restore job or --profile volume for a folder/disk, then run next again",
         ]
     )
 

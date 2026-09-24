@@ -349,3 +349,24 @@ Three supported setups:
   `status` and `report --format markdown` output of the restore job to the
   service notes as evidence that every rescued file reached the new disk;
   do not generate `customer-report` from a restore job.
+
+## Non-home source intake and rescue
+
+Use `--profile volume` for an external disk, a bare project/photo folder,
+embedded photo library, or `/Volumes/<Volume>/.Trashes/<uid>`. Confirm the
+exact source and requested exclusions with the operator. The complete
+selected tree is included by default, including caches, Trash and
+`Backups.backupdb`; no home phases or home approval gates apply.
+
+Place `JOB` and `DST` in disjoint directories on the recovery disk. Run
+`preflight`, then `init --profile volume`, `scan` without `--phase`, and
+`copy` (same arguments as the README non-home example). Repeat bounded scans
+after copying committed rows, or follow `next`. Use repeatable
+`init --exclude 'source-relative-glob'` only for explicitly excluded paths;
+patterns and scope are immutable for that job and appear in the JSON report.
+
+Explain before handoff: empty directories and symbolic links are not
+recreated, special files are skipped, and the result is neither a bootable
+volume nor a filesystem image. Check `status` and both reports, sample copied
+files, and review every inaccessible path. A scan access error means coverage
+is incomplete even when all previously recorded files have been copied.

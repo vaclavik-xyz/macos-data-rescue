@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import shlex
 import sqlite3
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ class JobConfig:
     source: Path
     dest: Path
     profile: str
+    excludes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -161,7 +163,11 @@ def volume_root_for_home(source: Path) -> Path:
     return source.parent
 
 
-def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobConfig:
+def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str, *, excludes: tuple[str, ...] = ()) -> JobConfig:
+    if excludes and profile != "volume":
+        raise RescueError("custom excludes require --profile volume")
+    if any(not pattern or pattern.startswith("/") or ".." in pattern.split("/") for pattern in excludes):
+        raise RescueError("exclude patterns must be nonempty and relative to source")
     if not source.exists() or not source.is_dir():
         raise RescueError(f"source must be an existing directory: {source}")
     source_resolved = source.resolve()
@@ -184,6 +190,8 @@ def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobC
         existing = load_config(job_dir)
         if existing.source != source_resolved or existing.dest != dest_resolved:
             raise RescueError("job already initialized; source and dest cannot change; create a new job")
+        if existing.excludes != excludes:
+            raise RescueError("job already initialized; excludes cannot change; create a new job")
         return existing
     job_dir.mkdir(parents=True, exist_ok=True)
     db_path = manifest_path(job_dir)
@@ -197,6 +205,7 @@ def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobC
             "source": str(source_resolved),
             "dest": str(dest_resolved),
             "profile": profile,
+            "excludes": json.dumps(excludes),
             "created_at": now,
             "updated_at": now,
         }
@@ -210,7 +219,7 @@ def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str) -> JobC
         conn.commit()
     finally:
         conn.close()
-    return JobConfig(job_dir=job_dir, source=source_resolved, dest=dest_resolved, profile=profile)
+    return JobConfig(job_dir=job_dir, source=source_resolved, dest=dest_resolved, profile=profile, excludes=excludes)
 
 
 def existing_job_profile(job_dir: Path) -> str | None:
@@ -278,6 +287,7 @@ def load_config(job_dir: Path) -> JobConfig:
         source=source,
         dest=dest,
         profile=values["profile"],
+        excludes=tuple(json.loads(values.get("excludes", "[]"))),
     )
 
 

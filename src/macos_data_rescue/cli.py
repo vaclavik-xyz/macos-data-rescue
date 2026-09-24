@@ -24,6 +24,7 @@ PHASES = (
     "photos",
     "library",
     "restore",
+    "volume",
     "all",
 )
 
@@ -39,7 +40,10 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--job-dir", required=True, type=Path)
     init_parser.add_argument("--source", required=True, type=Path)
     init_parser.add_argument("--dest", required=True, type=Path)
-    init_parser.add_argument("--profile", default="customer-home", choices=("customer-home", "restore"))
+    init_parser.add_argument("--profile", default="customer-home", choices=("customer-home", "restore", "volume"))
+
+    init_parser.add_argument("--exclude", action="append", default=[], metavar="PATTERN",
+                             help="Volume profile only: exclude a source-relative glob (repeatable).")
 
     preflight_parser = subparsers.add_parser(
         "preflight",
@@ -117,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
-            config = init_manifest(args.job_dir, args.source, args.dest, args.profile)
+            config = init_manifest(args.job_dir, args.source, args.dest, args.profile, excludes=tuple(args.exclude))
             print(f"initialized job={config.job_dir} source={config.source} dest={config.dest}")
         elif args.command == "preflight":
             summary = preflight_job(args.job_dir, args.source, args.dest)

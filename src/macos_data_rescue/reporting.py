@@ -121,9 +121,9 @@ CUSTOMER_REPORT_TEXT = {
         copied_data_recorded="Copied data recorded in the manifest",
         what_recovered="What Was Recovered",
         what_recovered_body=(
-            "The recovered folder contains the customer's selected home-folder data, "
-            "including visible home folders, hidden home-folder items, and any selected "
-            "application data phases that were copied for this job."
+            "The recovered folder contains the files copied from the selected source "
+            "within this job's profile and exclusions. Empty directories and symbolic "
+            "links are not recreated."
         ),
         destination_intro="The destination folder is:",
         breakdown="Recovered Data Breakdown",
@@ -192,9 +192,9 @@ CUSTOMER_REPORT_TEXT = {
         copied_data_recorded="Zkopírovaná data evidovaná v manifestu",
         what_recovered="Co bylo zachráněno",
         what_recovered_body=(
-            "Cílová složka obsahuje vybraná data z domovské složky zákazníka, "
-            "včetně viditelných složek, skrytých položek v domovské složce "
-            "a vybraných aplikačních dat zkopírovaných pro tuto zakázku."
+            "Cílová složka obsahuje zkopírované soubory z vybraného zdroje podle "
+            "profilu a výjimek této zakázky. Prázdné adresáře a symbolické odkazy "
+            "se neobnovují."
         ),
         destination_intro="Cílová složka je:",
         breakdown="Přehled zachráněných dat",
@@ -340,6 +340,7 @@ def report_payload(job_dir: Path) -> dict[str, object]:
             "source": str(config.source),
             "dest": str(config.dest),
             "profile": config.profile,
+            "excludes": list(config.excludes),
         },
         "summary": normalized_summary(job_dir),
         "warnings": list(WARNINGS),
