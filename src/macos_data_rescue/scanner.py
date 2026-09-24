@@ -12,7 +12,8 @@ from .errors import RescueError
 from .locking import exclusive_job
 from .manifest import (
     GATED_PHASES,
-    ScannedFile,
+    connect,
+    scan_issues,
     approval_required_message,
     begin_scan,
     load_approval,
@@ -110,12 +111,13 @@ DEFAULT_SCAN_BATCH_SIZE = 100
 class ScanSummary:
     scanned: int
     stopped: str | None = None
+    issues: int = 0
 
     def as_line(self) -> str:
         line = f"scanned={self.scanned}"
         if self.stopped:
             line += f" stopped={self.stopped}"
-        return line
+        return line + (f" scan_issues={self.issues}" if self.issues else "")
 
 
 @exclusive_job
@@ -126,6 +128,7 @@ def scan_job(
     limit: int | None = None,
     timeout: float | None = None,
     batch_size: int = DEFAULT_SCAN_BATCH_SIZE,
+    io_timeout: float = 30,
 ) -> ScanSummary:
     config = load_config(job_dir)
     scan_phase = resolve_scan_phase(config.profile, phase)
@@ -145,12 +148,23 @@ def scan_job(
     if scan_phase == "applications":
         validate_application_layout(config)
     migrate_manifest(job_dir)
+    conn = connect(job_dir)
+    try:
+        if conn.execute("select value from config where key = 'scan_engine'").fetchone() is None:
+            # The traversal order changed. Revisit old partial scans, preserving rows/statuses.
+            conn.execute("delete from config where key like 'scan_cursor:%'")
+            conn.execute("insert into config values('scan_engine', 'isolated-v1')")
+            conn.commit()
+    finally:
+        conn.close()
     limiter = ScanLimiter(limit=limit, timeout=timeout)
-    cursor = load_scan_cursor(job_dir, scan_phase) or None
+    previous_issues = tuple(issue["path"] for issue in scan_issues(job_dir, scan_phase))
+    cursor = None if previous_issues else (load_scan_cursor(job_dir, scan_phase) or None)
     begin_scan(job_dir, scan_phase)
     count = upsert_scanned_files(
         job_dir,
-        limiter.wrap(iter_source_files(config.source, phase=scan_phase, excludes=config.excludes), skip_until_after=cursor),
+        limiter.wrap(iter_source_files(config.source, phase=scan_phase, excludes=config.excludes,
+                                                 io_timeout=io_timeout, deadline=limiter.deadline, previous_issues=previous_issues), skip_until_after=cursor),
         batch_size=batch_size,
         cursor_key=scan_cursor_key(scan_phase),
     )
@@ -158,13 +172,15 @@ def scan_job(
         limiter = ScanLimiter(limit=limit, deadline=limiter.deadline)
         count = upsert_scanned_files(
             job_dir,
-            limiter.wrap(iter_source_files(config.source, phase=scan_phase, excludes=config.excludes)),
+            limiter.wrap(iter_source_files(config.source, phase=scan_phase, excludes=config.excludes,
+                                                 io_timeout=io_timeout, deadline=limiter.deadline, previous_issues=previous_issues)),
             batch_size=batch_size,
             cursor_key=scan_cursor_key(scan_phase),
         )
-    if limiter.stopped is None:
+    issues = len(scan_issues(job_dir, scan_phase))
+    if limiter.stopped is None and not issues:
         mark_scan_complete(job_dir, scan_phase)
-    return ScanSummary(scanned=count, stopped=limiter.stopped)
+    return ScanSummary(scanned=count, stopped=limiter.stopped, issues=issues)
 
 
 def resolve_scan_phase(profile: str, phase: str) -> str:
@@ -201,89 +217,42 @@ class ScanLimiter:
         self.found_cursor = True
 
     def wrap(self, files, *, skip_until_after: str | None = None):
+        from .scan_worker import ScanIssue, ScanStopped
         iterator = iter(files)
         self.found_cursor = skip_until_after is None
-        while True:
-            if self.limit is not None and self.scanned >= self.limit:
-                self.stopped = "limit"
-                return
-            if self.deadline is not None and time.monotonic() >= self.deadline:
-                self.stopped = "timeout"
-                return
-            try:
-                item = next(iterator)
-            except StopIteration:
-                return
-            if not self.found_cursor:
-                if item.relative_path == skip_until_after:
-                    self.found_cursor = True
-                continue
-            yield item
-            self.scanned += 1
+        try:
+            while True:
+                if self.limit is not None and self.scanned >= self.limit:
+                    self.stopped = "limit"
+                    return
+                if self.deadline is not None and time.monotonic() >= self.deadline:
+                    self.stopped = "timeout"
+                    return
+                try:
+                    item = next(iterator)
+                except StopIteration:
+                    return
+                if isinstance(item, ScanStopped):
+                    self.stopped = item.reason
+                    return
+                if isinstance(item, ScanIssue):
+                    yield item
+                    continue
+                if not self.found_cursor:
+                    if item.relative_path == skip_until_after:
+                        self.found_cursor = True
+                    continue
+                yield item
+                self.scanned += 1
+        finally:
+            if hasattr(iterator, "close"):
+                iterator.close()
 
 
-def iter_source_files(source: Path, *, phase: str = "all", excludes: tuple[str, ...] = ()):
-    if phase == "applications":
-        for scan_root, dest_prefix in application_scan_roots(source):
-            if scan_root.is_symlink():
-                entry = scanned_symlink(scan_root, (dest_prefix,), "applications", source_path=str(scan_root))
-                if entry is not None:
-                    yield entry
-                continue
-            yield from iter_application_tree(scan_root, dest_prefix)
-        return
-    for scan_root in scan_roots(source, phase):
-        if scan_root != source and scan_root.is_symlink():
-            rel_parts = relative_parts(source, scan_root)
-            entry = scanned_symlink(scan_root, rel_parts, manifest_phase_for(rel_parts, phase))
-            if entry is not None:
-                yield entry
-            continue
-        yield from iter_tree(source, scan_root, phase, excludes=excludes)
-
-
-def scan_roots(source: Path, phase: str) -> tuple[Path, ...]:
-    if phase in {"all", "visible-home", "hidden-home", "full-home", "restore", "volume"}:
-        return (source,)
-    if phase == "app-data":
-        library = source / "Library"
-        return (library,) if is_directory_or_symlink(library) else ()
-    if phase == "important":
-        names = IMPORTANT_DIRS
-    elif phase == "photos":
-        names = PHOTO_DIRS
-    elif phase == "library":
-        names = {"Library"}
-    else:
-        raise RescueError(f"unsupported scan phase: {phase}")
-
-    roots = []
-    for name in sorted(names):
-        root = source / name
-        if is_directory_or_symlink(root):
-            roots.append(root)
-    return tuple(roots)
-
-
-def application_scan_roots(source: Path) -> tuple[tuple[Path, str], ...]:
-    roots: list[tuple[Path, str]] = []
-    volume_applications = volume_root_for_home(source) / "Applications"
-    user_applications = source / "Applications"
-    if is_directory_or_symlink(volume_applications):
-        roots.append((volume_applications, "Volume Applications"))
-    if is_directory_or_symlink(user_applications):
-        roots.append((user_applications, "Home Applications"))
-    return tuple(roots)
-
-
-def is_directory_or_symlink(path: Path) -> bool:
-    try:
-        info = path.stat(follow_symlinks=False)
-    except FileNotFoundError:
-        return False
-    except OSError as exc:
-        scan_error(exc)
-    return stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+def iter_source_files(source: Path, *, phase="all", excludes=(), io_timeout=30, deadline=None, previous_issues=()):
+    from .scan_worker import isolated_files
+    yield from isolated_files(source, phase=phase, excludes=excludes, io_timeout=io_timeout, deadline=deadline,
+                              previous_issues=previous_issues)
 
 
 def volume_root_for_home(source: Path) -> Path:
@@ -294,120 +263,6 @@ def volume_root_for_home(source: Path) -> Path:
         if users_index > 0 and users_index + 1 < len(parts):
             return Path(*parts[:users_index])
     return source.parent
-
-
-def scan_error(exc: OSError) -> None:
-    raise RescueError(f"scan incomplete: {exc}; fix source access and repeat scan") from exc
-
-
-def iter_tree(source: Path, scan_root: Path, phase: str, *, excludes: tuple[str, ...] = ()):
-    for root, dirs, files in os.walk(scan_root, topdown=True, followlinks=False, onerror=scan_error):
-        root_path = Path(root)
-        dirs.sort()
-        files.sort()
-        kept_dirs = []
-        for dirname in dirs:
-            path = root_path / dirname
-            rel_parts = relative_parts(source, path)
-            if matches_exclude(rel_parts, excludes):
-                continue
-            # os.walk classifies symlinks to directories as dirs; record them
-            # like file symlinks so the manifest shows they existed, but never
-            # descend into them. should_descend also matters: for app-data a
-            # symlink at an intermediate curated position (Library/MobileSync,
-            # Library/Containers, ...) fails the full-prefix file check but
-            # would have been descended as a real directory, and must not
-            # vanish without a manifest trace.
-            if path.is_symlink():
-                if should_include_file(rel_parts, phase) or should_descend(rel_parts, phase):
-                    entry = scanned_symlink(path, rel_parts, manifest_phase_for(rel_parts, phase))
-                    if entry is not None:
-                        yield entry
-                continue
-            if should_descend(rel_parts, phase):
-                kept_dirs.append(dirname)
-        dirs[:] = kept_dirs
-
-        for filename in files:
-            path = root_path / filename
-            rel_parts = relative_parts(source, path)
-            if matches_exclude(rel_parts, excludes):
-                continue
-            if not should_include_file(rel_parts, phase):
-                continue
-            try:
-                info = path.stat(follow_symlinks=False)
-            except OSError as exc:
-                scan_error(exc)
-            yield ScannedFile(
-                relative_path="/".join(rel_parts),
-                size=info.st_size,
-                mtime_ns=info.st_mtime_ns,
-                mode=stat.S_IMODE(info.st_mode),
-                kind=file_kind(info.st_mode),
-                phase=manifest_phase_for(rel_parts, phase),
-                warning=warning_for(path, rel_parts, info),
-            )
-
-
-def iter_application_tree(scan_root: Path, dest_prefix: str):
-    for root, dirs, files in os.walk(scan_root, topdown=True, followlinks=False, onerror=scan_error):
-        root_path = Path(root)
-        dirs.sort()
-        files.sort()
-        for dirname in dirs:
-            path = root_path / dirname
-            if not path.is_symlink():
-                continue
-            rel = Path(dest_prefix) / path.relative_to(scan_root)
-            entry = scanned_symlink(path, rel.parts, "applications", source_path=str(path))
-            if entry is not None:
-                yield entry
-        for filename in files:
-            path = root_path / filename
-            try:
-                info = path.stat(follow_symlinks=False)
-            except OSError as exc:
-                scan_error(exc)
-            rel = Path(dest_prefix) / path.relative_to(scan_root)
-            rel_parts = rel.parts
-            yield ScannedFile(
-                relative_path=str(rel).replace(os.sep, "/"),
-                source_path=str(path),
-                size=info.st_size,
-                mtime_ns=info.st_mtime_ns,
-                mode=stat.S_IMODE(info.st_mode),
-                kind=file_kind(info.st_mode),
-                phase="applications",
-                warning=warning_for(path, rel_parts, info),
-            )
-
-
-def scanned_symlink(
-    path: Path,
-    rel_parts: tuple[str, ...],
-    phase: str,
-    *,
-    source_path: str | None = None,
-) -> ScannedFile | None:
-    try:
-        info = path.stat(follow_symlinks=False)
-    except OSError as exc:
-        scan_error(exc)
-    return ScannedFile(
-        relative_path="/".join(rel_parts),
-        source_path=source_path,
-        size=info.st_size,
-        mtime_ns=info.st_mtime_ns,
-        mode=stat.S_IMODE(info.st_mode),
-        kind=file_kind(info.st_mode),
-        phase=phase,
-        warning=None,
-    )
-
-
-def relative_parts(source: Path, path: Path) -> tuple[str, ...]:
-    return path.relative_to(source).parts
 
 
 def matches_exclude(parts: tuple[str, ...], patterns: tuple[str, ...]) -> bool:
@@ -504,14 +359,6 @@ def path_could_match_prefix(
         parts == prefix[: len(parts)] or parts[: len(prefix)] == prefix
         for prefix in prefixes
     )
-
-
-def is_real_directory(path: Path) -> bool:
-    try:
-        info = path.stat(follow_symlinks=False)
-    except OSError:
-        return False
-    return stat.S_ISDIR(info.st_mode)
 
 
 def manifest_phase_for(parts: tuple[str, ...], requested_phase: str) -> str:

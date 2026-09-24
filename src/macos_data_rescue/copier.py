@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import errno
+import hashlib
 import multiprocessing
 import multiprocessing.process
 import os
@@ -12,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .activity import Activity
+from .storage import StoragePaused, load_anchors
 from .errors import RescueError
 from .locking import exclusive_job
 from .manifest import (
@@ -52,6 +55,7 @@ class CopySummary:
     failed: int = 0
     timed_out: int = 0
     skipped: int = 0
+    paused: str | None = None
 
     def as_line(self) -> str:
         return (
@@ -59,6 +63,7 @@ class CopySummary:
             f"timed_out={self.timed_out} skipped={self.skipped} "
             f"copied_from_fallback={self.copied_from_fallback} "
             f"{UNREADABLE_COMPRESSED}={self.unreadable_compressed}"
+            + (f" paused={self.paused}" if self.paused else "")
         )
 
 
@@ -79,13 +84,17 @@ def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = N
         if has_apps:
             validate_application_layout(config)
     migrate_manifest(job_dir)
-    cleanup_stale_temps(job_dir, phase, config.dest)
     summary = CopySummary()
     attempted = 0
     handled_ids: set[int] = set()
     conn = connect(job_dir)
     worker = CopyWorker()
+    activity = Activity(conn, "copy", phase)
+    worker.progress = activity.progress
     try:
+        worker.anchors = load_anchors(conn, config.source, config.dest)
+        worker.check_storage(timeout)
+        cleanup_stale_temps(job_dir, phase, config.dest)
         if path is not None:
             row = conn.execute("select * from files where relative_path = ?", (path,)).fetchone()
             if row is None or row["kind"] != "file" or row["status"] not in ("failed", "timed_out", UNREADABLE_COMPRESSED):
@@ -104,12 +113,12 @@ def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = N
                          (fallback_from, row["id"]))
             conn.commit()
             row = conn.execute("select * from files where id = ?", (row["id"],)).fetchone()
-            process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker)
+            process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker, activity=activity)
             return summary
         for row in iter_selected_files(job_dir, phase, statuses=WORK_STATUSES):
             if limit is not None and attempted >= limit:
                 break
-            process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker)
+            process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker, activity=activity)
             handled_ids.add(int(row["id"]))
             attempted += 1
 
@@ -124,7 +133,7 @@ def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = N
             except ValueError:
                 if limit is not None and attempted >= limit:
                     break
-                process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker)
+                process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker, activity=activity)
                 handled_ids.add(int(row["id"]))
                 attempted += 1
                 continue
@@ -133,12 +142,21 @@ def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = N
                 continue
             if limit is not None and attempted >= limit:
                 break
-            process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker)
+            process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker, activity=activity)
             handled_ids.add(int(row["id"]))
             attempted += 1
+    except StoragePaused as exc:
+        summary.paused = str(exc)
+    except BaseException:
+        activity.finish("interrupted")
+        raise
     finally:
-        worker.close()
-        conn.close()
+        try:
+            if activity.data["state"] == "running":
+                activity.finish("paused" if summary.paused else "finished", summary.paused)
+        finally:
+            worker.close()
+            conn.close()
     return summary
 
 
@@ -152,7 +170,12 @@ def process_row(
     *,
     conn=None,
     worker: CopyWorker | None = None,
+    activity: Activity | None = None,
 ) -> None:
+    if worker is not None:
+        worker.check_storage(timeout)
+    if activity is not None:
+        activity.file(row["relative_path"])
     scan_warning = without_copy_xattr_warnings(row["warning"])
     summary.processed += 1
     mark_copying(job_dir, row["id"], conn=conn)
@@ -195,6 +218,20 @@ def process_row(
 
     result = copy_one_with_timeout(source, dest, timeout, expected_size=int(row["size"]), worker=worker, registry_conn=conn)
     status = str(result["status"])
+    pause = result.get("pause_reason")
+    if status != "copied" and not pause and worker is not None:
+        try:
+            worker.check_storage(timeout)
+        except StoragePaused as exc:
+            pause = str(exc)
+    if pause:
+        mark_result(job_dir, row["id"], "pending", error=str(pause), conn=conn)
+        # A storage outage does not consume this file's retry allowance.
+        conn.execute("update files set attempts = max(0, attempts - 1) where id = ?", (row["id"],))
+        conn.commit()
+        raise StoragePaused(str(pause))
+    if activity is not None:
+        activity.completed(int(result.get("copied_bytes", 0)))
     if status == "copied":
         copied_bytes = int(result.get("copied_bytes", 0))
         mark_result(
@@ -202,6 +239,7 @@ def process_row(
             row["id"],
             "copied_from_fallback" if fallback else "copied",
             copied_bytes=copied_bytes,
+            sha256=result.get("sha256"),
             fallback_mtime_ns=int(result["source_mtime_ns"]) if fallback else None,
             warning=combine_warnings(scan_warning, result.get("warning")),
             conn=conn,
@@ -329,6 +367,8 @@ def is_same_or_inside(candidate: Path, parent: Path) -> bool:
 
 
 def destination_matches(dest: Path, row: Any) -> bool:
+    if "verification_status" in row.keys() and row["verification_status"] == "failed":
+        return False
     try:
         info = dest.lstat()
         if not stat.S_ISREG(info.st_mode):
@@ -358,13 +398,15 @@ def copy_one_with_timeout(
         dest.parent.mkdir(parents=True, exist_ok=True)
         temp = make_temp_path(dest)
     except OSError as exc:
-        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}", "copied_bytes": 0}
+        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}", "copied_bytes": 0,
+                "pause_reason": storage_error_reason(exc)}
     if registry_conn is not None:
         try:
             info = temp.lstat()
         except OSError as exc:
             cleanup_path(temp)
-            return {"status": "failed", "error": f"{type(exc).__name__}: {exc}", "copied_bytes": 0}
+            return {"status": "failed", "error": f"{type(exc).__name__}: {exc}", "copied_bytes": 0,
+                "pause_reason": storage_error_reason(exc)}
         registry_conn.execute("insert into temporary_files values(?, ?, ?)", (str(temp), info.st_dev, info.st_ino))
         registry_conn.commit()
     owns_worker = worker is None
@@ -396,6 +438,17 @@ class CopyWorker:
         self._ctx = multiprocessing.get_context("spawn")
         self._process: multiprocessing.process.BaseProcess | None = None
         self._conn = None
+        self.progress = None
+        self.anchors = None
+
+    def check_storage(self, timeout):
+        if self.anchors is None:
+            return
+        self._ensure_worker()
+        self._conn.send({"probe": self.anchors})
+        result = self._wait_result(timeout)
+        if result.get("status") != "available":
+            raise StoragePaused(str(result.get("error", "Storage probe failed")))
 
     def copy_one(
         self,
@@ -414,6 +467,17 @@ class CopyWorker:
                 continue
             return self._wait_result(timeout)
         return {"status": "failed", "error": "copy worker could not be started", "copied_bytes": 0}
+
+    def verify_one(self, root: Path, relative_path: str, timeout: float) -> dict[str, object]:
+        for _attempt in range(2):
+            try:
+                self._ensure_worker()
+                self._conn.send({"verify": str(root), "path": relative_path})
+            except OSError:
+                self._discard()
+                continue
+            return self._wait_result(timeout)
+        return {"status": "failed", "error": "verification worker could not be started"}
 
     def close(self) -> None:
         process, conn = self._process, self._conn
@@ -473,18 +537,22 @@ class CopyWorker:
                 ready = conn.poll(remaining)
             except OSError:
                 ready = True
-            if ready:
-                break
-        try:
-            result = conn.recv()
-        except (EOFError, OSError):
-            process.join(1)
-            exitcode = process.exitcode
-            self._discard()
-            if exitcode == 0:
-                return {"status": "failed", "error": "copy worker exited without a result"}
-            return {"status": "failed", "error": f"copy worker exited with code {exitcode}"}
-        return result
+            if not ready:
+                continue
+            try:
+                result = conn.recv()
+            except (EOFError, OSError):
+                process.join(1)
+                exitcode = process.exitcode
+                self._discard()
+                if exitcode == 0:
+                    return {"status": "failed", "error": "copy worker exited without a result"}
+                return {"status": "failed", "error": f"copy worker exited with code {exitcode}"}
+            if "progress" in result:
+                if self.progress is not None:
+                    self.progress(int(result["progress"]))
+                continue
+            return result
 
     def _timed_out_result(self, timeout: float) -> dict[str, object]:
         process = self._process
@@ -505,8 +573,16 @@ def _copy_worker_loop(conn) -> None:
             return
         if job is None:
             return
-        source_text, dest_text, temp_text, expected_size = job
-        result = _copy_one_in_worker(Path(source_text), Path(dest_text), Path(temp_text), expected_size)
+        if isinstance(job, dict) and "probe" in job:
+            from .storage import probe_storage
+            result = probe_storage(job["probe"])
+        elif isinstance(job, dict) and "verify" in job:
+            from .verification import hash_destination
+            result = hash_destination(Path(job["verify"]), job["path"])
+        else:
+            source_text, dest_text, temp_text, expected_size = job
+            result = _copy_one_in_worker(Path(source_text), Path(dest_text), Path(temp_text), expected_size,
+                                         progress=lambda count: conn.send({"progress": count}))
         result["worker_pid"] = os.getpid()
         try:
             conn.send(result)
@@ -514,8 +590,10 @@ def _copy_worker_loop(conn) -> None:
             return
 
 
-def _copy_one_in_worker(source: Path, dest: Path, temp: Path, expected_size: int) -> dict[str, object]:
+def _copy_one_in_worker(source: Path, dest: Path, temp: Path, expected_size: int, *, progress=None) -> dict[str, object]:
     copied_bytes = 0
+    digest = hashlib.sha256()
+    last_progress = time.monotonic()
     source_info = None
     reading_source = False
     try:
@@ -533,7 +611,11 @@ def _copy_one_in_worker(source: Path, dest: Path, temp: Path, expected_size: int
                     if not chunk:
                         break
                     dst.write(chunk)
+                    digest.update(chunk)
                     copied_bytes += len(chunk)
+                    if progress is not None and time.monotonic() - last_progress >= 0.5:
+                        progress(copied_bytes)
+                        last_progress = time.monotonic()
                 dst.flush()
                 os.fsync(dst.fileno())
         if copied_bytes != expected_size:
@@ -548,7 +630,7 @@ def _copy_one_in_worker(source: Path, dest: Path, temp: Path, expected_size: int
         os.replace(temp, dest)
         fsync_directory(dest.parent)
         result: dict[str, object] = {"status": "copied", "copied_bytes": copied_bytes,
-                                     "source_mtime_ns": source_info.st_mtime_ns}
+                                     "source_mtime_ns": source_info.st_mtime_ns, "sha256": digest.hexdigest()}
         if xattr_warning:
             result["warning"] = xattr_warning
         return result
@@ -556,7 +638,8 @@ def _copy_one_in_worker(source: Path, dest: Path, temp: Path, expected_size: int
         cleanup_path(temp)
         reason = compressed_read_failure(source, source_info, exc) if reading_source else None
         return {"status": UNREADABLE_COMPRESSED if reason else "failed",
-                "error": reason or f"{type(exc).__name__}: {exc}", "copied_bytes": copied_bytes}
+                "error": reason or f"{type(exc).__name__}: {exc}", "copied_bytes": copied_bytes,
+                "pause_reason": storage_error_reason(exc) if not reading_source else None}
 
 
 def compressed_read_failure(source: Path, info, exc: BaseException) -> str | None:
@@ -773,3 +856,11 @@ def fsync_directory(path: Path) -> None:
         pass
     finally:
         os.close(fd)
+
+
+def storage_error_reason(exc):
+    if isinstance(exc, OSError) and exc.errno in (errno.ENOSPC, errno.EDQUOT):
+        return "Destination is full or its quota is exhausted; free space and resume."
+    if isinstance(exc, OSError) and exc.errno in (errno.ENODEV, errno.ENXIO):
+        return "Storage device disconnected; reconnect the original disk and resume."
+    return None

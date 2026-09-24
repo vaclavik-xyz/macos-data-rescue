@@ -191,8 +191,9 @@ uv run macos-data-rescue report --job-dir "$JOB" --format json > "$JOB/report.js
 Exit codes describe whether the command itself ran:
 
 - `0`: command completed. `copy` and `resume` can still return `0` when individual files are `failed` or `timed_out`.
-- `1`: job/runtime error, such as unsafe paths, missing manifest, missing source, or unexpected failure.
+- `1`: job/runtime error, unresolved scan paths, or failed/unverifiable destination integrity checks.
 - `2`: CLI usage error from argparse, such as invalid phase or missing required option.
+- `3`: copy paused because storage is unavailable or destination space/quota is exhausted. Reconnect the original disks or free space, then resume.
 
 Per-file statuses in `status` and reports are the real rescue outcome:
 
@@ -204,7 +205,7 @@ Per-file statuses in `status` and reports are the real rescue outcome:
 - `skipped`: intentionally not copied, currently used for symlinks to avoid following external targets.
 Warnings are separate per-file report fields, not statuses. They are customer-visible notes such as suspected iCloud dataless placeholder or xattr preservation issue.
 
-Scan output may include `stopped=timeout` or `stopped=limit`. That is not a copy failure. It means the scan command intentionally stopped after committing a partial manifest; run `copy`/`resume`, then repeat the same phase scan if more coverage is needed. Repeated scans of the same phase resume from the saved cursor and clear it after the phase completes.
+Scan output may include `stopped=timeout` or `stopped=limit`. That is not a copy failure. It means the scan command intentionally stopped after committing a partial manifest; run `copy`/`resume`, then repeat the same phase scan if more coverage is needed. Repeated scans of the same phase resume from the saved cursor and clear it after the phase completes. Unresolved scan paths force a fresh traversal on retry so repaired paths before the cursor are not missed. `scan --io-timeout` bounds each worker operation; inspect `scan_issues` in the report.
 
 ## Warnings To Explain
 
@@ -403,3 +404,25 @@ count. Resume retries the stored alternate after interruption or destination
 loss. When comparing a restore's rows to its source rescue, add `copied` and
 `copied_from_fallback` counts. Failed alternate attempts preserve provenance;
 a later rescan that detects a changed original resets the mapping.
+
+
+## Integrity, live progress, and duplicate candidates
+
+Before handoff, run a destination-only integrity check with a timeout appropriate
+for the largest recovered files. SHA256 is captured during each new copy; older
+copies without a baseline are reported as unverifiable. Do not reread a damaged
+source merely to create missing checksums.
+
+```bash
+uv run macos-data-rescue verify --job-dir "$JOB" --timeout 3600
+uv run macos-data-rescue status --job-dir "$JOB" --watch
+uv run macos-data-rescue find-duplicates --job-dir "$JOB" --path 'failed/file.heic'
+```
+
+A failed integrity check, unverifiable content, or unresolved `scan_issues` must
+be reviewed before handoff. Copy status and integrity status are separate: a
+previously copied file can later fail verification. Watch ETA is for the known
+queue only. Candidate metadata does not prove identical content; inspect the
+alternative and use the explicit command printed for the selected candidate.
+See [rescue operations](rescue-operations.md) for timeout, migration, and outage
+behavior.

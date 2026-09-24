@@ -5,6 +5,8 @@ import math
 import sys
 from pathlib import Path
 
+from .activity import watch_status
+from .candidates import candidates_text, duplicate_candidates
 from .copier import copy_job
 from .errors import RescueError
 from .guide import next_text
@@ -12,6 +14,7 @@ from .manifest import GATED_PHASES, init_manifest, record_approval
 from .preflight import preflight_job
 from .reporting import CUSTOMER_REPORT_LANGUAGES, report, status_text, write_customer_report
 from .scanner import scan_job
+from .verification import verify_job
 
 
 PHASES = (
@@ -56,7 +59,8 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser = subparsers.add_parser("scan", help="Scan source files into the manifest.")
     scan_parser.add_argument("--job-dir", required=True, type=Path)
     scan_parser.add_argument("--phase", default="all", choices=PHASES)
-    scan_parser.add_argument("--timeout", type=positive_float)
+    scan_parser.add_argument("--timeout", type=positive_float, help="Overall scan budget in seconds.")
+    scan_parser.add_argument("--io-timeout", default=30.0, type=positive_float, help="Maximum seconds per scan filesystem operation.")
     scan_parser.add_argument("--limit", type=positive_int)
 
     copy_parser = subparsers.add_parser("copy", help="Copy files recorded in the manifest.")
@@ -65,8 +69,23 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser = subparsers.add_parser("resume", help="Resume a copy job.")
     add_copy_options(resume_parser)
 
+    verify_parser = subparsers.add_parser("verify", help="Verify destination SHA256 without rereading source files.")
+    verify_parser.add_argument("--job-dir", required=True, type=Path)
+    verify_parser.add_argument("--phase", default="all", choices=PHASES)
+    verify_parser.add_argument("--timeout", default=30.0, type=positive_float)
+    verify_parser.add_argument("--limit", type=positive_int)
+
     status_parser = subparsers.add_parser("status", help="Print manifest status counts.")
     status_parser.add_argument("--job-dir", required=True, type=Path)
+    status_parser.add_argument("--watch", action="store_true", help="Refresh progress until Ctrl-C.")
+    status_parser.add_argument("--interval", default=1.0, type=positive_float)
+    status_parser.add_argument("--count", type=positive_int, help="Stop watch after N snapshots.")
+
+    candidates_parser = subparsers.add_parser("find-duplicates", help="Suggest metadata-matched alternatives for a failed file.")
+    candidates_parser.add_argument("--job-dir", required=True, type=Path)
+    candidates_parser.add_argument("--path", required=True)
+    candidates_parser.add_argument("--limit", default=20, type=positive_int)
+    candidates_parser.add_argument("--format", default="text", choices=("text", "json"))
 
     next_parser = subparsers.add_parser("next", help="Print the next recommended command for a job.")
     next_parser.add_argument("--job-dir", required=True, type=Path)
@@ -132,8 +151,10 @@ def main(argv: list[str] | None = None) -> int:
             if summary.failed:
                 return 1
         elif args.command == "scan":
-            summary = scan_job(args.job_dir, phase=args.phase, limit=args.limit, timeout=args.timeout)
+            summary = scan_job(args.job_dir, phase=args.phase, limit=args.limit, timeout=args.timeout, io_timeout=args.io_timeout)
             print(summary.as_line())
+            if summary.issues:
+                return 1
         elif args.command in {"copy", "resume"}:
             summary = copy_job(
                 args.job_dir,
@@ -144,8 +165,21 @@ def main(argv: list[str] | None = None) -> int:
                 fallback_from=args.fallback_from,
             )
             print(summary.as_line())
+            if summary.paused:
+                return 3
+        elif args.command == "verify":
+            summary = verify_job(args.job_dir, phase=args.phase, timeout=args.timeout, limit=args.limit)
+            print(summary.as_line())
+            if summary.failed or summary.unverifiable:
+                return 1
         elif args.command == "status":
-            print(status_text(args.job_dir))
+            if args.watch:
+                watch_status(args.job_dir, interval=args.interval, count=args.count)
+            else:
+                print(status_text(args.job_dir))
+        elif args.command == "find-duplicates":
+            payload = duplicate_candidates(args.job_dir, args.path, limit=args.limit)
+            sys.stdout.write(candidates_text(payload, args.format))
         elif args.command == "next":
             print(next_text(args.job_dir))
         elif args.command == "approve":
