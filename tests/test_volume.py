@@ -67,3 +67,12 @@ def test_volume_customer_report_uses_generic_scope(tmp_path):
     report = (tmp_path / 'recovery-report.md').read_text()
     assert 'selected source' in report
     assert 'home-folder' not in report
+
+
+def test_exclude_trailing_slash_is_normalized(tmp_path):
+    source, _, job = volume_job(tmp_path, '--exclude', 'Library/')
+    write_file(source / 'Library/Mail/message', b'mail')
+    write_file(source / 'photo', b'photo')
+    run_cli('scan', '--job-dir', str(job))
+    assert set(file_rows(job)) == {'photo'}
+    assert json.loads(config_value(job, 'excludes')) == ['Library']

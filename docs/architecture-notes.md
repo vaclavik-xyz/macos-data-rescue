@@ -50,3 +50,24 @@ The MVP now ships:
 - Rescanning unchanged rows retains copy warnings; changed content/kind/source
   resets retry attempts. Customer reports describe the recorded files and do
   not certify complete source coverage.
+
+## Recovery outcomes and compression metadata
+
+Issue #2 adds the `volume` profile and explicit per-row duplicate recovery.
+Fallback provenance stays separate from `source_path` (which maps application
+archive paths): `fallback_source_path` is source-relative and never changes
+the destination. The original manifest size remains the byte-count contract;
+`fallback_mtime_ns` is used only for verifying the resulting destination on
+resume. An unchanged rescan preserves this provenance; changed original
+content resets it. Equal byte count is not a content-identity check.
+
+Compression diagnosis runs after an ENOTSUP source read in the timed worker.
+`UF_COMPRESSED` plus missing/unreadable `com.apple.decmpfs` yields
+`unreadable-compressed-flag`. Normal xattr enumeration may hide compression
+metadata, so diagnosis explicitly uses `XATTR_SHOWCOMPRESSION` (0x0020),
+per [Apple's xattr.h](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/xattr.h).
+See also [Apple's compression implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/decmpfs.c).
+Decoded output deliberately does not receive `com.apple.decmpfs` or the
+compressed flag. Tests include a real healthy macOS compressed fixture;
+missing-metadata ENOTSUP failures are injected without modifying a customer
+volume. Physically damaged HFS+ media are not part of automated testing.

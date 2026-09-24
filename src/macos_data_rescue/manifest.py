@@ -14,6 +14,8 @@ from .errors import RescueError
 
 MANIFEST_NAME = "manifest.sqlite"
 WARNING_UNCHANGED = object()
+UNREADABLE_COMPRESSED = "unreadable-compressed-flag"
+COPIED_STATUSES = ("copied", "copied_from_fallback")
 GATED_PHASES = ("app-data", "applications", "full-home", "library")
 
 
@@ -107,6 +109,9 @@ def create_schema(conn: sqlite3.Connection) -> None:
     )
     ensure_column(conn, "files", "source_path", "text")
     ensure_column(conn, "files", "warning", "text")
+    for column, definition in (("fallback_source_path", "text"), ("fallback_mtime_ns", "integer"),
+                               ("fallback_original_error", "text")):
+        ensure_column(conn, "files", column, definition)
 
 
 def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -164,6 +169,7 @@ def volume_root_for_home(source: Path) -> Path:
 
 
 def init_manifest(job_dir: Path, source: Path, dest: Path, profile: str, *, excludes: tuple[str, ...] = ()) -> JobConfig:
+    excludes = tuple(pattern.rstrip("/") for pattern in excludes)
     if excludes and profile != "volume":
         raise RescueError("custom excludes require --profile volume")
     if any(not pattern or pattern.startswith("/") or ".." in pattern.split("/") for pattern in excludes):
@@ -523,6 +529,9 @@ def upsert_scanned_files(
                     finished_at,
                 ),
             )
+            if not keep_status:
+                conn.execute("update files set fallback_source_path = null, fallback_mtime_ns = null, "
+                             "fallback_original_error = null where relative_path = ?", (item.relative_path,))
             count += 1
             pending += 1
             batch_cursor = item.relative_path
@@ -657,6 +666,7 @@ def mark_result(
     error: str | None = None,
     warning=WARNING_UNCHANGED,
     copied_bytes: int = 0,
+    fallback_mtime_ns: int | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> None:
     owns_conn = conn is None
@@ -691,6 +701,8 @@ def mark_result(
                 """,
                 (status, error, warning, copied_bytes, now, now, file_id),
             )
+        if fallback_mtime_ns is not None:
+            conn.execute("update files set fallback_mtime_ns = ? where id = ?", (fallback_mtime_ns, file_id))
         conn.commit()
     finally:
         if owns_conn:
@@ -704,7 +716,7 @@ def status_summary(job_dir: Path) -> dict[str, dict[str, int]]:
             """
             select status,
                    count(*) as count,
-                   coalesce(sum(case when status = 'copied' then copied_bytes else size end), 0) as bytes
+                   coalesce(sum(case when status in ('copied', 'copied_from_fallback') then copied_bytes else size end), 0) as bytes
             from files
             group by status
             order by status

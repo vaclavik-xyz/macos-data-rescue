@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import errno
 import multiprocessing
 import multiprocessing.process
 import os
@@ -14,6 +15,8 @@ from typing import Any
 from .errors import RescueError
 from .locking import exclusive_job
 from .manifest import (
+    COPIED_STATUSES,
+    UNREADABLE_COMPRESSED,
     approval_required_message,
     connect,
     iter_selected_files,
@@ -31,10 +34,12 @@ RESCUE_TMP_SUFFIX = ".rescue-tmp"
 # FAT stores mtimes with 2-second resolution and exFAT with 10 ms, so a
 # destination on a recovery SSD can round the mtime copy_basic_metadata set.
 DEST_MTIME_TOLERANCE_NS = 2_000_000_000
-WORK_STATUSES = ("pending", "copying", "failed", "timed_out")
-DONE_STATUSES = ("copied", "skipped")
+WORK_STATUSES = ("pending", "copying", "failed", "timed_out", UNREADABLE_COMPRESSED)
+DONE_STATUSES = (*COPIED_STATUSES, "skipped")
+UF_COMPRESSED = getattr(stat, "UF_COMPRESSED", 0x20)
+XATTR_SHOWCOMPRESSION = 0x0020
 XATTR_NOFOLLOW = 0x0001
-XATTR_SKIP_NAMES = frozenset({"com.apple.quarantine", "com.apple.macl"})
+XATTR_SKIP_NAMES = frozenset({"com.apple.quarantine", "com.apple.macl", "com.apple.decmpfs"})
 XATTR_WARNING_PREFIX = "extended attributes not fully preserved"
 
 
@@ -42,6 +47,8 @@ XATTR_WARNING_PREFIX = "extended attributes not fully preserved"
 class CopySummary:
     processed: int = 0
     copied: int = 0
+    copied_from_fallback: int = 0
+    unreadable_compressed: int = 0
     failed: int = 0
     timed_out: int = 0
     skipped: int = 0
@@ -49,12 +56,17 @@ class CopySummary:
     def as_line(self) -> str:
         return (
             f"processed={self.processed} copied={self.copied} failed={self.failed} "
-            f"timed_out={self.timed_out} skipped={self.skipped}"
+            f"timed_out={self.timed_out} skipped={self.skipped} "
+            f"copied_from_fallback={self.copied_from_fallback} "
+            f"{UNREADABLE_COMPRESSED}={self.unreadable_compressed}"
         )
 
 
 @exclusive_job
-def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = None) -> CopySummary:
+def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = None,
+             path: str | None = None, fallback_from: str | None = None) -> CopySummary:
+    if (path is None) != (fallback_from is None):
+        raise RescueError("--path and --fallback-from must be supplied together")
     config = load_config(job_dir)
     if config.profile == "customer-home":
         blocked = unapproved_gated_phases(job_dir, phase)
@@ -74,6 +86,26 @@ def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = N
     conn = connect(job_dir)
     worker = CopyWorker()
     try:
+        if path is not None:
+            row = conn.execute("select * from files where relative_path = ?", (path,)).fetchone()
+            if row is None or row["kind"] != "file" or row["status"] not in ("failed", "timed_out", UNREADABLE_COMPRESSED):
+                raise RescueError("--path must name a failed, timed-out, or unreadable compressed regular file")
+            if phase != "all" and row["phase"] != phase:
+                raise RescueError("--path is outside the selected phase")
+            # A mapping is an explicit operator choice, never a filename/size guess.
+            try:
+                fallback_source(config.source, fallback_from)
+                if fallback_from == path:
+                    raise ValueError("fallback must name a different source file")
+            except ValueError as exc:
+                raise RescueError(str(exc)) from exc
+            conn.execute("update files set fallback_source_path = ?, fallback_mtime_ns = null, "
+                         "fallback_original_error = coalesce(fallback_original_error, error) where id = ?",
+                         (fallback_from, row["id"]))
+            conn.commit()
+            row = conn.execute("select * from files where id = ?", (row["id"],)).fetchone()
+            process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker)
+            return summary
         for row in iter_selected_files(job_dir, phase, statuses=WORK_STATUSES):
             if limit is not None and attempted >= limit:
                 break
@@ -147,7 +179,8 @@ def process_row(
 
     try:
         dest = resolve_relative_path(dest_root, row["relative_path"], kind=row["kind"])
-        source = resolve_row_source(source_root, row)
+        fallback = row["fallback_source_path"] if "fallback_source_path" in row.keys() else None
+        source = fallback_source(source_root, fallback) if fallback else resolve_row_source(source_root, row)
     except ValueError as exc:
         mark_result(
             job_dir,
@@ -167,12 +200,19 @@ def process_row(
         mark_result(
             job_dir,
             row["id"],
-            "copied",
+            "copied_from_fallback" if fallback else "copied",
             copied_bytes=copied_bytes,
+            fallback_mtime_ns=int(result["source_mtime_ns"]) if fallback else None,
             warning=combine_warnings(scan_warning, result.get("warning")),
             conn=conn,
         )
-        summary.copied += 1
+        if fallback:
+            summary.copied_from_fallback += 1
+        else:
+            summary.copied += 1
+    elif status == UNREADABLE_COMPRESSED:
+        mark_result(job_dir, row["id"], status, error=str(result["error"]), warning=scan_warning, conn=conn)
+        summary.unreadable_compressed += 1
     elif status == "timed_out":
         mark_result(job_dir, row["id"], "timed_out", error=str(result["error"]), warning=scan_warning, conn=conn)
         summary.timed_out += 1
@@ -188,6 +228,16 @@ def process_row(
             conn=conn,
         )
         summary.failed += 1
+
+
+def fallback_source(source_root: Path, relative_path: str) -> Path:
+    source = resolve_relative_path(source_root, relative_path, kind="file")
+    current = source_root
+    for part in safe_relative_parts(relative_path):
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("fallback source must not traverse symlinks")
+    return source
 
 
 def resolve_row_source(source_root: Path, row: Any) -> Path:
@@ -287,7 +337,12 @@ def destination_matches(dest: Path, row: Any) -> bool:
         return False
     if info.st_size != row["size"]:
         return False
-    return abs(info.st_mtime_ns - int(row["mtime_ns"])) <= DEST_MTIME_TOLERANCE_NS
+    mtime = row["mtime_ns"]
+    if "fallback_mtime_ns" in row.keys() and row["fallback_source_path"]:
+        mtime = row["fallback_mtime_ns"]
+        if mtime is None:
+            return False
+    return abs(info.st_mtime_ns - int(mtime)) <= DEST_MTIME_TOLERANCE_NS
 
 
 def copy_one_with_timeout(
@@ -305,7 +360,11 @@ def copy_one_with_timeout(
     except OSError as exc:
         return {"status": "failed", "error": f"{type(exc).__name__}: {exc}", "copied_bytes": 0}
     if registry_conn is not None:
-        info = temp.lstat()
+        try:
+            info = temp.lstat()
+        except OSError as exc:
+            cleanup_path(temp)
+            return {"status": "failed", "error": f"{type(exc).__name__}: {exc}", "copied_bytes": 0}
         registry_conn.execute("insert into temporary_files values(?, ?, ?)", (str(temp), info.st_dev, info.st_ino))
         registry_conn.commit()
     owns_worker = worker is None
@@ -457,16 +516,26 @@ def _copy_worker_loop(conn) -> None:
 
 def _copy_one_in_worker(source: Path, dest: Path, temp: Path, expected_size: int) -> dict[str, object]:
     copied_bytes = 0
+    source_info = None
+    reading_source = False
     try:
-        with source.open("rb") as src, temp.open("wb") as dst:
-            while True:
-                chunk = src.read(CHUNK_SIZE)
-                if not chunk:
-                    break
-                dst.write(chunk)
-                copied_bytes += len(chunk)
-            dst.flush()
-            os.fsync(dst.fileno())
+        source_info = source.stat(follow_symlinks=False)
+        if stat.S_ISLNK(source_info.st_mode):
+            raise ValueError("source became a symlink after scan")
+        reading_source = True
+        with source.open("rb") as src:
+            reading_source = False
+            with temp.open("wb") as dst:
+                while True:
+                    reading_source = True
+                    chunk = src.read(CHUNK_SIZE)
+                    reading_source = False
+                    if not chunk:
+                        break
+                    dst.write(chunk)
+                    copied_bytes += len(chunk)
+                dst.flush()
+                os.fsync(dst.fileno())
         if copied_bytes != expected_size:
             cleanup_path(temp)
             return {
@@ -478,17 +547,38 @@ def _copy_one_in_worker(source: Path, dest: Path, temp: Path, expected_size: int
         copy_basic_metadata(source, temp)
         os.replace(temp, dest)
         fsync_directory(dest.parent)
-        result: dict[str, object] = {"status": "copied", "copied_bytes": copied_bytes}
+        result: dict[str, object] = {"status": "copied", "copied_bytes": copied_bytes,
+                                     "source_mtime_ns": source_info.st_mtime_ns}
         if xattr_warning:
             result["warning"] = xattr_warning
         return result
     except BaseException as exc:
         cleanup_path(temp)
-        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+        reason = compressed_read_failure(source, source_info, exc) if reading_source else None
+        return {"status": UNREADABLE_COMPRESSED if reason else "failed",
+                "error": reason or f"{type(exc).__name__}: {exc}", "copied_bytes": copied_bytes}
+
+
+def compressed_read_failure(source: Path, info, exc: BaseException) -> str | None:
+    # Inspect only after a real ENOTSUP read failure, inside the timed worker.
+    # Normal listxattr hides compression metadata; use XATTR_SHOWCOMPRESSION.
+    if not isinstance(exc, OSError) or exc.errno != errno.ENOTSUP:
+        return None
+    if not info or not getattr(info, "st_flags", 0) & UF_COMPRESSED:
+        return None
+    try:
+        header = MacOSXattrOps().get(source, "com.apple.decmpfs", show_compression=True)
+        if header:
+            return None
+        detail = "empty com.apple.decmpfs"
+    except (OSError, AttributeError) as metadata_error:
+        detail = f"missing or unreadable com.apple.decmpfs ({metadata_error})"
+    return ("UF_COMPRESSED content is not addressable on the mounted source (ENOTSUP); "
+            f"{detail}. This is not an I/O-sector diagnosis; use an independently verified duplicate if available.")
 
 
 def make_temp_path(dest: Path) -> Path:
-    fd, name = tempfile.mkstemp(prefix=f".{dest.name}.", suffix=RESCUE_TMP_SUFFIX, dir=dest.parent)
+    fd, name = tempfile.mkstemp(prefix=".rescue.", suffix=RESCUE_TMP_SUFFIX, dir=dest.parent)
     os.close(fd)
     return Path(name)
 
@@ -507,19 +597,18 @@ def cleanup_stale_temps(job_dir: Path, phase: str, dest_root: Path) -> None:
                 info = safe.lstat()
                 if rel not in protected and info.st_dev == row["device"] and info.st_ino == row["inode"]:
                     cleanup_path(safe)
-            except (OSError, ValueError):
+                    if safe.exists():
+                        continue
+            except FileNotFoundError:
+                pass
+            except OSError:
+                continue
+            except ValueError:
                 pass
             conn.execute("delete from temporary_files where path = ?", (row["path"],))
         conn.commit()
     finally:
         conn.close()
-
-
-def is_internal_temp_name(name: str) -> bool:
-    if not name.startswith(".") or not name.endswith(RESCUE_TMP_SUFFIX):
-        return False
-    prefix = name[: -len(RESCUE_TMP_SUFFIX)]
-    return "." in prefix[1:]
 
 
 def cleanup_path(temp: Path) -> None:
@@ -591,16 +680,17 @@ class MacOSXattrOps:
             if name
         )
 
-    def get(self, path: Path, name: str) -> bytes:
+    def get(self, path: Path, name: str, *, show_compression: bool = False) -> bytes:
         path_bytes = os.fsencode(path)
         name_bytes = name.encode()
-        size = self._getxattr(path_bytes, name_bytes, None, 0, 0, XATTR_NOFOLLOW)
+        options = XATTR_NOFOLLOW | (XATTR_SHOWCOMPRESSION if show_compression else 0)
+        size = self._getxattr(path_bytes, name_bytes, None, 0, 0, options)
         if size < 0:
             raise_os_error(path)
         if size == 0:
             return b""
         buffer = ctypes.create_string_buffer(size)
-        read = self._getxattr(path_bytes, name_bytes, buffer, size, 0, XATTR_NOFOLLOW)
+        read = self._getxattr(path_bytes, name_bytes, buffer, size, 0, options)
         if read < 0:
             raise_os_error(path)
         return buffer.raw[:read]

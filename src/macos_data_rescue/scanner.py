@@ -279,8 +279,10 @@ def application_scan_roots(source: Path) -> tuple[tuple[Path, str], ...]:
 def is_directory_or_symlink(path: Path) -> bool:
     try:
         info = path.stat(follow_symlinks=False)
-    except OSError:
+    except FileNotFoundError:
         return False
+    except OSError as exc:
+        scan_error(exc)
     return stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
 
 

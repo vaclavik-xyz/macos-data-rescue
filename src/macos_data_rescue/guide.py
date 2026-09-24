@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .manifest import (
     JobConfig,
+    UNREADABLE_COMPRESSED,
     connect,
     load_approval,
     load_config,
@@ -33,7 +34,7 @@ def next_text(job_dir: Path) -> str:
     exhausted = sum(int(item["exhausted"]) for item in stats.values())
     if exhausted:
         lines.append(
-            f"review: {exhausted} file(s) failed/timed_out after retries; inspect the technician report"
+            f"review: {exhausted} file(s) need manual review (exhausted retries or unreadable compression); inspect the technician report"
         )
     if config.profile in {"restore", "volume"}:
         lines.extend(restore_lines(job_dir, stats, profile=config.profile))
@@ -51,13 +52,14 @@ def phase_stats(job_dir: Path) -> dict[str, dict[str, int]]:
                    sum(case when status in ('pending', 'copying') then 1 else 0 end) as work,
                    sum(case when status in ('failed', 'timed_out') and attempts < ? then 1 else 0 end)
                        as retryable,
-                   sum(case when status in ('failed', 'timed_out') and attempts >= ? then 1 else 0 end)
+                   sum(case when (status in ('failed', 'timed_out') and attempts >= ?)
+                                 or status = ? then 1 else 0 end)
                        as exhausted,
                    count(*) as total
             from files
             group by phase
             """,
-            (RETRY_LIMIT, RETRY_LIMIT),
+            (RETRY_LIMIT, RETRY_LIMIT, UNREADABLE_COMPRESSED),
         ).fetchall()
     finally:
         conn.close()
@@ -143,7 +145,7 @@ def restore_lines(job_dir: Path, stats: dict[str, dict[str, int]], *, profile: s
         f"  {base_cmd('resume', '--job-dir', quoted(job_dir), '--timeout', COPY_TIMEOUT)}",
         "  (must print processed=0)",
         f"  {base_cmd('status', '--job-dir', quoted(job_dir))}",
-        "  (total row count must equal the rescue job's copied= count)",
+        "  (total row count must equal the rescue job's copied= plus copied_from_fallback= counts)",
         "evidence:",
         f"  {base_cmd('report', '--job-dir', quoted(job_dir), '--format', 'markdown')}"
         f" > {quoted(job_dir / 'report.md')}",

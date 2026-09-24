@@ -23,7 +23,7 @@ The goal is simple: **one bad file must not stop the whole rescue**. The tool sc
 - Destination writes use unique temp files in the destination directory, then atomic `os.replace`.
 - A file is marked `copied` only after the worker copies the expected byte count from the manifest.
 - macOS extended attributes and resource forks are copied best-effort with a native libSystem xattr backend.
-- `copy` / `resume` clean stale internal `*.rescue-tmp` files in relevant destination directories before copying.
+- `copy` / `resume` clean only job-registered stale temporary files whose device/inode still match. Unregistered older temporary files are retained for technician review.
 - `status` prints manifest counts.
 - `preflight` runs the environment checks from the runbook (source readable and not `/`, job/dest outside the source, mount read-only state, write probes, free space vs remaining manifest bytes) and exits non-zero on failure.
 - `next` inspects the manifest and prints the exact next recommended command, so the operator — human or agent — never has to track the workflow state machine; approval-gated phases are listed separately and are never auto-suggested as required.
@@ -238,3 +238,39 @@ case-sensitive globs against source-relative paths (no leading `/`);
 Exclusions are stored in the job and JSON report and cannot change on
 re-init; start a new job to change scope. Without `--exclude`, every regular
 file is selected. The `restore` profile retains its separate restore meaning.
+
+## Unreadable compressed files and recovery from a duplicate
+
+When a source read fails with `ENOTSUP`, the copy worker checks `UF_COMPRESSED`
+and the hidden `com.apple.decmpfs` metadata. If the flag is set and metadata
+is missing/unreadable, it records `unreadable-compressed-flag`. Detection
+runs inside the per-file timeout, at the first read failure; it does not add
+extra scan reads. The destination is not published on failure, and no
+zero-filled substitute is produced. Status and technician/customer reports
+count these separately. The result means the compressed content is not
+addressable on this mounted source; it does not diagnose bad sectors or
+prove that another copy cannot recover the file.
+
+If a technician identifies a readable duplicate **inside the same source**,
+select the failed row and alternate file explicitly:
+
+```bash
+uv run macos-data-rescue copy --job-dir "$JOB" \
+  --path 'damaged-folder/photo.heic' \
+  --fallback-from 'readable-folder/photo.heic' --timeout 300
+```
+
+Both paths are relative to the job's source (the original `--path` is the
+exact manifest path). Only that failed/timed-out/unreadable regular-file row
+is attempted. No automatic duplicate matching is performed. The alternate
+must not traverse symlinks. The usual expected byte-count check and atomic
+publication apply; equal size alone is not proof that the alternate is the
+same content. Verify identity using independent evidence before selecting it.
+
+Success is `copied_from_fallback`. The manifest and JSON/Markdown reports
+retain the alternate path, original error, and alternate modification time.
+Customer reports count it as recovered and identify the alternate-source
+count separately. Resume uses the persisted alternate mapping, including
+when the destination is missing; rescanning changed original content clears
+the mapping. A failed alternate attempt keeps the old destination intact and
+retains its mapping for retry. Start a new job to reset an unwanted mapping.

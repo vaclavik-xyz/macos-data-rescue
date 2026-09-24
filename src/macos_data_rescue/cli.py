@@ -100,6 +100,8 @@ def add_copy_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--phase", default="all", choices=PHASES)
     parser.add_argument("--timeout", default=30.0, type=positive_float)
     parser.add_argument("--limit", type=positive_int)
+    parser.add_argument("--path", help="Failed manifest path to recover from an explicitly selected duplicate.")
+    parser.add_argument("--fallback-from", help="Alternate source-relative file; requires --path.")
 
 
 def positive_float(value: str) -> float:
@@ -138,6 +140,8 @@ def main(argv: list[str] | None = None) -> int:
                 phase=args.phase,
                 timeout=args.timeout,
                 limit=args.limit,
+                path=args.path,
+                fallback_from=args.fallback_from,
             )
             print(summary.as_line())
         elif args.command == "status":

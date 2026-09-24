@@ -6,11 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import RescueError
-from .manifest import connect, is_same_or_inside, manifest_path, validate_path_layout
+from .manifest import UNREADABLE_COMPRESSED, connect, is_same_or_inside, manifest_path, validate_path_layout
 from .reporting import format_size
 
 
-WORK_STATUSES = ("pending", "copying", "failed", "timed_out")
+WORK_STATUSES = ("pending", "copying", "failed", "timed_out", UNREADABLE_COMPRESSED)
 READ_PROBE_LIMIT = 1000
 
 
@@ -69,7 +69,7 @@ def manifest_pending_bytes(job_dir: Path) -> int:
     conn = connect(job_dir)
     try:
         row = conn.execute(
-            "select coalesce(sum(size), 0) from files where status in (?, ?, ?, ?)",
+            "select coalesce(sum(size), 0) from files where status in (?, ?, ?, ?, ?)",
             WORK_STATUSES,
         ).fetchone()
     finally:

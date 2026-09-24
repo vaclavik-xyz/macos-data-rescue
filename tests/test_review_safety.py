@@ -129,3 +129,83 @@ def test_application_phase_rejects_destination_inside_application_source(tmp_pat
     with pytest.raises(RescueError, match='overlaps application source'):
         scanner.scan_job(job, phase='applications')
     assert not (apps / 'rescue').exists()
+
+
+def test_temp_registration_stat_failure_is_per_file(tmp_path, monkeypatch):
+    source = tmp_path / 'source'
+    write_file(source / 'Desktop/a', b'a')
+    job, _, dest = init_and_scan(tmp_path, source)
+    original_lstat = type(dest).lstat
+
+    def fail_temp_stat(path):
+        if path.name.endswith('.rescue-tmp'):
+            raise OSError('destination stat failure')
+        return original_lstat(path)
+
+    monkeypatch.setattr(type(dest), 'lstat', fail_temp_stat)
+    result = copier.copy_job(job, phase='all', timeout=2)
+    assert result.failed == 1
+    assert file_rows(job)['Desktop/a']['status'] == 'failed'
+
+
+def test_failed_temp_cleanup_retains_registration(tmp_path, monkeypatch):
+    source = tmp_path / 'source'
+    write_file(source / 'Desktop/a', b'a')
+    job, _, dest = init_and_scan(tmp_path, source)
+    dest.mkdir()
+    temp = dest / '.rescue.orphan.rescue-tmp'
+    temp.write_bytes(b'orphan')
+    info = temp.stat()
+    conn = manifest.connect(job)
+    conn.execute('insert into temporary_files values (?, ?, ?)', (str(temp), info.st_dev, info.st_ino))
+    conn.commit()
+    monkeypatch.setattr(copier, 'cleanup_path', lambda path: None)
+    copier.cleanup_stale_temps(job, 'all', dest)
+    assert conn.execute('select count(*) from temporary_files').fetchone()[0] == 1
+    conn.close()
+
+
+def test_resume_replaces_internal_destination_symlink(tmp_path):
+    source = tmp_path / 'source'
+    write_file(source / 'Desktop/a', b'a')
+    job, _, dest = init_and_scan(tmp_path, source)
+    run_cli('copy', '--job-dir', str(job))
+    target = dest / 'Desktop/a'
+    info = target.stat()
+    alternate = dest / 'alternate'
+    alternate.write_bytes(b'z')
+    os.utime(alternate, ns=(info.st_atime_ns, info.st_mtime_ns))
+    target.unlink()
+    target.symlink_to(alternate)
+    run_cli('resume', '--job-dir', str(job))
+    assert not target.is_symlink()
+    assert target.read_bytes() == b'a'
+    assert alternate.read_bytes() == b'z'
+
+
+def test_selected_scan_root_access_error_is_not_an_empty_scope(tmp_path, monkeypatch):
+    source = tmp_path / 'source'
+    write_file(source / 'Desktop/a', b'a')
+    job, _, _ = init_and_scan(tmp_path, source)
+    original_stat = type(source).stat
+
+    def denied_root(path, *args, **kwargs):
+        if path == source / 'Desktop':
+            raise PermissionError('cannot stat selected root')
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(source), 'stat', denied_root)
+    with pytest.raises(RescueError, match='cannot stat selected root'):
+        scanner.scan_job(job, phase='important')
+    assert config_value(job, 'scan_done:important') is None
+
+
+def test_customer_report_cannot_overwrite_application_source(tmp_path):
+    source = tmp_path / 'volume/Users/customer'
+    write_file(source / 'Desktop/a', b'a')
+    app_file = tmp_path / 'volume/Applications/Test.app/Contents/data'
+    write_file(app_file, b'app content')
+    job, _, _ = init_and_scan(tmp_path, source)
+    result = run_cli('customer-report', '--job-dir', str(job), '--output', str(app_file), check=False)
+    assert result.returncode == 1
+    assert app_file.read_bytes() == b'app content'
