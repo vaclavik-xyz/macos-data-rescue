@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/brand/macos-data-rescue-icon.svg" width="144" height="144" alt="macOS Data Rescue icon">
+  <img src="assets/brand/Favicon.svg" width="144" height="144" alt="macOS Data Rescue icon">
 </p>
 
 <h1 align="center">macOS Data Rescue</h1>

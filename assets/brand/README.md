@@ -2,7 +2,7 @@
 
 The editable source files are:
 
-- `macos-data-rescue-icon.svg` — square project icon and favicon master.
+- `Favicon.svg` — square project icon and favicon master.
 - `og-image.svg` — Open Graph / social preview master at a `1200 × 630` view box.
 
 Generated delivery files:
