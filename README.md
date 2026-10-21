@@ -35,27 +35,66 @@ The goal is simple: **one bad file must not stop the whole rescue**. The tool sc
 - `customer-report` writes an English or Czech customer-facing Markdown/PDF handoff report into the visible recovery root.
 - `gui` launches a native macOS technician GUI (`macos-data-rescue-gui`) with zero external runtime dependencies, providing real-time telemetry, visual preflight checks, gated approvals, and customer report generation.
 
-## Install / run locally
+## Install
+
+Clone the repository and install dependencies with [uv](https://docs.astral.sh/uv/):
 
 ```bash
 git clone https://github.com/vaclavik-xyz/macos-data-rescue.git
 cd macos-data-rescue
 uv sync
-uv run macos-data-rescue --help
-# Or launch the graphical user interface:
-uv run macos-data-rescue gui
 ```
 
-You can also double-click `macos-data-rescue.command` in macOS Finder to launch the GUI console directly.
-
-After the repository is public, you can also install the CLI directly from GitHub:
+After the repository is public, you can also install the tool directly from GitHub:
 
 ```bash
 uv tool install git+https://github.com/vaclavik-xyz/macos-data-rescue.git
 macos-data-rescue --help
+macos-data-rescue-gui --help
 ```
 
-The CLI has no runtime dependencies. Development and security-check tools are isolated to the dev dependency group.
+The application has no runtime dependencies (Python standard library only). Development and security-check tools are isolated in the dev dependency group.
+
+## How to run the software
+
+### 1. Graphical User Interface (GUI Console) — Recommended for Service Technicians
+
+The GUI provides an interactive macOS dashboard with Finder folder pickers, preflight safety health checks, phased rescue workflows, sleep inhibition (`caffeinate`), live transfer speed / ETA telemetry, and one-click customer handoff reports in English or Czech.
+
+- **Option A — Double-click in macOS Finder:**  
+  Double-click [macos-data-rescue.command](macos-data-rescue.command) directly in the project folder.
+- **Option B — Using uv:**  
+  ```bash
+  uv run macos-data-rescue gui
+  # or directly:
+  uv run macos-data-rescue-gui
+  ```
+- **Option C — Open directly into an existing job:**  
+  ```bash
+  uv run macos-data-rescue gui --job-dir "/Volumes/RecoverySSD/Customer/.rescue"
+  ```
+- **Option D — Using system Python 3 (without uv):**  
+  ```bash
+  python3 -m macos_data_rescue.gui
+  ```
+
+### 2. Command-Line Interface (CLI)
+
+For scripted, automated, or headless workflows:
+
+```bash
+# Display general help and subcommands:
+uv run macos-data-rescue --help
+
+# Run preflight safety check:
+uv run macos-data-rescue preflight --job-dir "$JOB" --source "$SRC" --dest "$DST"
+
+# Initialize a job:
+uv run macos-data-rescue init --job-dir "$JOB" --source "$SRC" --dest "$DST"
+
+# Check next recommended step:
+uv run macos-data-rescue next --job-dir "$JOB"
+```
 
 ## Typical service workflow
 
