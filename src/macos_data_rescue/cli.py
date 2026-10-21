@@ -115,6 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     gui_parser.add_argument("--job-dir", type=Path, help="Open an existing job directory.")
     gui_parser.add_argument("--source", type=Path, help="Pre-fill source directory.")
     gui_parser.add_argument("--dest", type=Path, help="Pre-fill destination directory.")
+    gui_parser.add_argument("--lang", default="cs", choices=("cs", "en"), help="Interface language (cs or en).")
 
     return parser
 
@@ -197,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"wrote report={output_path}")
         elif args.command == "gui":
             from .gui import run_gui
-            return run_gui(job_dir=args.job_dir, source=args.source, dest=args.dest)
+            return run_gui(job_dir=args.job_dir, source=args.source, dest=args.dest, lang=args.lang)
         else:
             parser.error(f"unknown command: {args.command}")
     except RescueError as exc:

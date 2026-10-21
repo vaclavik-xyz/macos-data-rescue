@@ -61,6 +61,8 @@ The application has no runtime dependencies (Python standard library only). Deve
 
 The GUI provides an interactive macOS dashboard with Finder folder pickers, preflight safety health checks, phased rescue workflows, sleep inhibition (`caffeinate`), live transfer speed / ETA telemetry, and one-click customer handoff reports in English or Czech.
 
+The interface is fully localized in **Czech (Čeština, default)** and **English**, switchable directly in the top header or via `--lang cs` / `--lang en`.
+
 - **Option A — Double-click in macOS Finder:**  
   Double-click [macos-data-rescue.command](macos-data-rescue.command) directly in the project folder.
 - **Option B — Using uv:**  

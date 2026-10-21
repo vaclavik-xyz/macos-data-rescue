@@ -2,6 +2,7 @@
 
 Built with Python standard library tkinter/ttk to provide a native macOS
 technician console with zero external runtime dependencies.
+Supports full localization in Czech (Čeština) and English.
 """
 from __future__ import annotations
 
@@ -48,16 +49,243 @@ CORE_PHASES = (
     "restore",
 )
 
-PHASE_DESCRIPTIONS = {
-    "visible-home": "Visible user data (Desktop, Documents, Downloads, etc.)",
-    "hidden-home": "Hidden configuration dotfiles and dotfolders (~/.ssh, etc.)",
-    "app-data": "Curated ~/Library data (Mail, Messages, Safari, Keychains, iOS backups) [Approval Required]",
-    "applications": "Applications from /Applications and ~/Applications [Approval Required]",
-    "full-home": "Full home directory coverage [Approval Required]",
-    "all": "All recorded manifest rows",
-    "volume": "Full disk volume rescue (volume profile)",
-    "restore": "1:1 restore of rescued tree to destination disk",
+MESSAGES: dict[str, dict[str, str]] = {
+    "cs": {
+        "app_title": "macOS Data Rescue — Servisní konzole technika",
+        "app_subtitle": "Servisní konzole pro záchranu dat (Share Disk / Target Disk)",
+        "tab_setup": " 1. Příprava a kontrola ",
+        "tab_rescue": " 2. Záchrana a průběh ",
+        "tab_verify": " 3. Ověření a duplicity ",
+        "tab_reports": " 4. Zprávy a protokol ",
+        "paths_title": "Konfigurace cest záchrany",
+        "source_path": "Cesta ke zdroji (Source):",
+        "source_hint": "Např. /Volumes/Macintosh HD - Data/Users/customer (připojeno přes Share Disk / Target Disk)",
+        "dest_path": "Cílová cesta (Destination):",
+        "dest_hint": "Např. /Volumes/RecoverySSD/Customer/user-data (na servisním SSD disku, mimo zdroj)",
+        "job_path": "Pracovní složka (Job Dir):",
+        "job_hint": "Uchovává manifest.sqlite a záznamy, např. /Volumes/RecoverySSD/Customer/.rescue (mimo zdroj)",
+        "browse": "Procházet...",
+        "profile": "Profil záchrany:",
+        "profile_home": "Domovská složka uživatele (doporučeno)",
+        "profile_volume": "Celý diskový svazek",
+        "profile_restore": "Obnova na nový Mac",
+        "volume_excludes": "Vyloučené vzory svazku (oddělené čárkou):",
+        "btn_preflight": "Spustit kontrolu (Preflight)",
+        "btn_init": "Inicializovat úlohu záchrany",
+        "btn_open_job": "Otevřít existující úlohu...",
+        "preflight_title": "Bezpečnostní kontroly prostředí a disku (Preflight)",
+        "col_status": "Stav",
+        "col_check": "Bezpečnostní kontrola",
+        "col_detail": "Diagnostické podrobnosti",
+        "preflight_none": "Kontrola prostředí zatím nebyla spuštěna.",
+        "preflight_fail": "Kontrola SELHALA ({fail} chyb, {warn} varování). Před zahájením záchrany opravte chyby.",
+        "preflight_ok": "Kontrola proběhla V POŘÁDKU ({checks} testů, {warn} varování). Připraveno k záchraně.",
+        "guide_title": "Inteligentní průvodce záchranou (Doporučený další krok)",
+        "guide_default": "Vyberte zdroj a cíl pro zahájení záchrany.",
+        "btn_execute_next": "Spustit doporučený krok",
+        "control_title": "Řídicí panel fází záchrany",
+        "select_phase": "Vyberte fázi:",
+        "btn_approve": "Schválit fázi...",
+        "btn_scan": "1. Skenovat fázi",
+        "btn_copy": "2. Kopírovat / Pokračovat",
+        "btn_stop": "Zastavit / Pozastavit záchranu",
+        "caffeinate": "Zabránit usnutí Macu (caffeinate)",
+        "per_file_timeout": "Timeout na soubor (s):",
+        "scan_budget": "Rozpočet skenu (s):",
+        "limit_optional": "Limit (volitelný):",
+        "telemetry_title": "Živá telemetrie a statistiky záchrany",
+        "data_volume": "Objem dat:",
+        "file_count": "Počet souborů:",
+        "speed": "Rychlost: {rate}",
+        "eta": "Zbývající čas: {eta}",
+        "current_file": "Soubor: {file}",
+        "badge_copied": "Zkopírováno",
+        "badge_fallback": "Z duplikátu",
+        "badge_pending": "Ve frontě",
+        "badge_timed_out": "Vypršel čas",
+        "badge_failed": "Selhalo",
+        "badge_compressed": "Komprimováno",
+        "badge_skipped": "Přeskočeno",
+        "log_title": "Živý záznam činnosti a konzole",
+        "clear_log": "Vymazat záznam",
+        "verify_title": "Ověření integrity zkopírovaných dat (SHA256)",
+        "verify_info": "Ověří cílové soubory proti kontrolním součtům SHA256 zaznamenaným během kopírování, bez nového čtení poškozeného zdroje.",
+        "btn_verify": "Spustit ověření integrity",
+        "verify_status_default": "Stav: Dosud neověřeno.",
+        "dups_title": "Selhané soubory a záchrana z duplikátů podle metadat",
+        "dups_info": "Soubory, jejichž čtení selhalo nebo vypršel časový limit, lze zachránit z nalezených identických kopií na disku.",
+        "failed_files_label": "Selhané soubory / vypršel čas:",
+        "col_path": "Relativní cesta",
+        "col_size": "Velikost",
+        "btn_find_dups": "Najít duplicitní kandidáty",
+        "cands_label": "Odpovídající kandidáti na disku:",
+        "col_cand_path": "Cesta ke kandidátovi",
+        "col_mtime": "Čas úpravy",
+        "btn_recover_cand": "Zachránit vybraný soubor z kandidáta",
+        "cust_report_title": "Předávací protokol pro zákazníka (Protokol o obnově)",
+        "report_format": "Formát protokolu:",
+        "report_lang": "Jazyk protokolu:",
+        "lang_cs": "Čeština",
+        "lang_en": "Angličtina (English)",
+        "btn_gen_cust_report": "Vygenerovat protokol pro zákazníka",
+        "btn_open_report": "Otevřít vygenerovaný protokol",
+        "tech_report_title": "Podrobná servisní zpráva pro technika",
+        "btn_refresh_tech": "Aktualizovat servisní zprávu",
+        "btn_save_tech": "Uložit zprávu do souboru...",
+        "language_label": "Jazyk:",
+        "state_ready": "Připraveno",
+        "state_running": "PROBÍHÁ",
+        "state_idle": "NEČINNÝ",
+        "state_paused": "POZASTAVENO",
+        "confirm_stop_title": "Potvrdit zastavení",
+        "confirm_stop_msg": "Opravdu chcete zastavit/pozastavit probíhající záchranu dat?\n\n(Zaznamenaný stav v manifestu zůstane zachován a lze kdykoliv navázat.)",
+        "confirm_close_title": "Ukončení aplikace",
+        "confirm_close_msg": "Právě probíhá záchrana dat.\nOpravdu chcete operaci přerušit a aplikaci ukončit?",
+        "approve_dialog_title": "Schválit citlivou fázi: {phase}",
+        "approve_dialog_text": "Fáze '{phase}' obsahuje citlivá nebo objemná data.\nZadejte jméno technika nebo zákazníka pro schválení:",
+        "approve_by_label": "Schválil (Technik / Zákazník):",
+        "btn_confirm_approval": "Potvrdit schválení",
+        "btn_cancel": "Zrušit",
+        "approved_badge": "Schváleno ({by})",
+        "no_approval_needed": "Nevyžaduje schválení",
+        "select_source_title": "Vyberte připojenou domovskou složku poškozeného Macu",
+        "select_dest_title": "Vyberte cílovou složku na záchranném disku",
+        "select_job_title": "Vyberte pracovní složku úlohy (.rescue)",
+    },
+    "en": {
+        "app_title": "macOS Data Rescue — Technician Console",
+        "app_subtitle": "Service Technician Console (Share Disk / Target Disk Recovery)",
+        "tab_setup": " 1. Setup & Preflight ",
+        "tab_rescue": " 2. Phased Rescue & Live Progress ",
+        "tab_verify": " 3. Verification & Duplicates ",
+        "tab_reports": " 4. Customer & Service Reports ",
+        "paths_title": "Rescue Paths Configuration",
+        "source_path": "Source Path:",
+        "source_hint": "E.g. /Volumes/Macintosh HD - Data/Users/customer (mounted via Share Disk / Target Disk)",
+        "dest_path": "Destination Path:",
+        "dest_hint": "E.g. /Volumes/RecoverySSD/Customer/user-data (on service recovery SSD, outside source)",
+        "job_path": "Job Directory:",
+        "job_hint": "Holds manifest.sqlite and logs, e.g. /Volumes/RecoverySSD/Customer/.rescue (outside source)",
+        "browse": "Browse...",
+        "profile": "Rescue Profile:",
+        "profile_home": "Customer Home (recommended)",
+        "profile_volume": "Full Volume",
+        "profile_restore": "Restore to Mac",
+        "volume_excludes": "Volume Exclude Globs (comma-separated):",
+        "btn_preflight": "Run Safety Preflight",
+        "btn_init": "Initialize Job Manifest",
+        "btn_open_job": "Open Existing Job Directory...",
+        "preflight_title": "Preflight Safety Checks & Health Report",
+        "col_status": "Status",
+        "col_check": "Safety Check",
+        "col_detail": "Diagnostic Detail",
+        "preflight_none": "No preflight run yet.",
+        "preflight_fail": "Preflight FAILED ({fail} failures, {warn} warnings). Fix failures before starting rescue.",
+        "preflight_ok": "Preflight PASSED ({checks} checks, {warn} warnings). Ready to rescue.",
+        "guide_title": "Smart Rescue Guide (Recommended Next Step)",
+        "guide_default": "Select source and destination to begin.",
+        "btn_execute_next": "Execute Recommended Step",
+        "control_title": "Rescue Phase Control Center",
+        "select_phase": "Select Phase:",
+        "btn_approve": "Approve Phase...",
+        "btn_scan": "1. Scan Phase",
+        "btn_copy": "2. Copy / Resume Phase",
+        "btn_stop": "Stop / Pause Rescue",
+        "caffeinate": "Keep Mac Awake (caffeinate)",
+        "per_file_timeout": "Per-File Timeout (s):",
+        "scan_budget": "Scan Budget (s):",
+        "limit_optional": "Limit (optional):",
+        "telemetry_title": "Live Rescue Telemetry & Metrics",
+        "data_volume": "Data Volume:",
+        "file_count": "File Count:",
+        "speed": "Speed: {rate}",
+        "eta": "ETA: {eta}",
+        "current_file": "Current file: {file}",
+        "badge_copied": "Copied",
+        "badge_fallback": "From Fallback",
+        "badge_pending": "Pending",
+        "badge_timed_out": "Timed Out",
+        "badge_failed": "Failed",
+        "badge_compressed": "Compressed Flag",
+        "badge_skipped": "Skipped",
+        "log_title": "Live Rescue Activity & Console Log",
+        "clear_log": "Clear Log",
+        "verify_title": "Destination Integrity Verification (SHA256)",
+        "verify_info": "Verifies destination files against SHA256 checksums recorded during copy, without rereading source media.",
+        "btn_verify": "Run Integrity Verification",
+        "verify_status_default": "Status: Not verified yet.",
+        "dups_title": "Failed Files & Metadata-Matched Duplicate Recovery",
+        "dups_info": "Files that failed or timed out during rescue can be recovered from identical candidates on the volume.",
+        "failed_files_label": "Failed / Timed Out Files:",
+        "col_path": "Relative Path",
+        "col_size": "Size",
+        "btn_find_dups": "Find Duplicate Candidates",
+        "cands_label": "Matched Candidate Files:",
+        "col_cand_path": "Candidate Source Path",
+        "col_mtime": "Modified Time",
+        "btn_recover_cand": "Recover Selected File from Candidate",
+        "cust_report_title": "Customer-Facing Recovery Report (Handoff Protocol)",
+        "report_format": "Report Format:",
+        "report_lang": "Language:",
+        "lang_cs": "Czech (Čeština)",
+        "lang_en": "English",
+        "btn_gen_cust_report": "Generate Customer Handoff Report",
+        "btn_open_report": "Open Generated Report in Finder / Viewer",
+        "tech_report_title": "Detailed Service / Technician Report",
+        "btn_refresh_tech": "Refresh Technician Report",
+        "btn_save_tech": "Save Report to File...",
+        "language_label": "Language:",
+        "state_ready": "Ready",
+        "state_running": "RUNNING",
+        "state_idle": "IDLE",
+        "state_paused": "PAUSED",
+        "confirm_stop_title": "Confirm Stop",
+        "confirm_stop_msg": "Do you want to stop/pause the current rescue operation?\n\n(Progress committed to manifest will be preserved and can be resumed.)",
+        "confirm_close_title": "Exit Confirmation",
+        "confirm_close_msg": "A rescue operation is currently in progress.\nAre you sure you want to stop it and exit?",
+        "approve_dialog_title": "Approve Gated Phase: {phase}",
+        "approve_dialog_text": "Phase '{phase}' contains sensitive or large data.\nRecord technician/customer approval to proceed:",
+        "approve_by_label": "Approved By (Technician / Customer):",
+        "btn_confirm_approval": "Confirm Approval",
+        "btn_cancel": "Cancel",
+        "approved_badge": "Approved ({by})",
+        "no_approval_needed": "No Approval Needed",
+        "select_source_title": "Select Mounted Source User Home Directory",
+        "select_dest_title": "Select Recovery Destination Directory",
+        "select_job_title": "Select Job Directory (.rescue)",
+    },
 }
+
+PHASE_DESCRIPTIONS: dict[str, dict[str, str]] = {
+    "cs": {
+        "visible-home": "Běžná viditelná data (Plocha, Dokumenty, Stahování, Obrázky atd.)",
+        "hidden-home": "Skryté konfigurační soubory a složky (~/.ssh, dotfiles atd.)",
+        "app-data": "Data aplikací z ~/Library (Mail, Zprávy, Safari, Klíčenky, zálohy iOS) [Vyžaduje schválení]",
+        "applications": "Aplikace ze systémové i uživatelské složky [Vyžaduje schválení]",
+        "full-home": "Kompletní domovská složka s vynecháním mezipamětí [Vyžaduje schválení]",
+        "all": "Všechny zaznamenané soubory v manifestu",
+        "volume": "Záchrana celého diskového svazku (volume profil)",
+        "restore": "1:1 obnova zachráněných dat na cílový Mac",
+    },
+    "en": {
+        "visible-home": "Visible user data (Desktop, Documents, Downloads, etc.)",
+        "hidden-home": "Hidden configuration dotfiles and dotfolders (~/.ssh, etc.)",
+        "app-data": "Curated ~/Library data (Mail, Messages, Safari, Keychains, iOS backups) [Approval Required]",
+        "applications": "Applications from /Applications and ~/Applications [Approval Required]",
+        "full-home": "Full home directory coverage [Approval Required]",
+        "all": "All recorded manifest rows",
+        "volume": "Full disk volume rescue (volume profile)",
+        "restore": "1:1 restore of rescued tree to destination disk",
+    },
+}
+
+
+def tr(key: str, lang: str = "cs", **kwargs: object) -> str:
+    lang_dict = MESSAGES.get(lang, MESSAGES["cs"])
+    template = lang_dict.get(key, MESSAGES["en"].get(key, key))
+    if kwargs:
+        return template.format(**kwargs)
+    return template
 
 
 def format_rate(rate_bytes_s: float) -> str:
@@ -68,9 +296,9 @@ def format_rate(rate_bytes_s: float) -> str:
     return f"{rate_bytes_s / 1e6:.2f} MB/s"
 
 
-def format_eta(seconds: int | float | None) -> str:
+def format_eta(seconds: int | float | None, lang: str = "cs") -> str:
     if seconds is None or seconds < 0:
-        return "calculating..."
+        return "počítám..." if lang == "cs" else "calculating..."
     sec = int(seconds)
     hours, remainder = divmod(sec, 3600)
     minutes, seconds_left = divmod(remainder, 60)
@@ -178,13 +406,13 @@ class CommandRunner:
 
 
 class DataRescueApp:
-    """Main technician GUI application."""
+    """Main technician GUI application with full bilingual (cs/en) support."""
 
     def __init__(self, root: tk.Tk, initial_job_dir: Path | None = None,
-                 initial_source: Path | None = None, initial_dest: Path | None = None) -> None:
+                 initial_source: Path | None = None, initial_dest: Path | None = None,
+                 lang: str = "cs") -> None:
         self.root = root
-        self.root.title("macOS Data Rescue — Technician Console")
-        self.root.minsize(960, 680)
+        self.lang = lang if lang in ("cs", "en") else "cs"
 
         # Style & Aqua look
         self.style = ttk.Style()
@@ -210,11 +438,12 @@ class DataRescueApp:
         self.limit_var = tk.StringVar(value="")
         self.caffeinate_var = tk.BooleanVar(value=True)
 
-        self.status_state_var = tk.StringVar(value="Ready")
-        self.status_detail_var = tk.StringVar(value="No job active")
-        self.guide_text_var = tk.StringVar(value="Select source and destination to begin.")
+        self.status_state_var = tk.StringVar(value=tr("state_ready", self.lang))
+        self.guide_text_var = tk.StringVar(value=tr("guide_default", self.lang))
 
+        # Build GUI widgets
         self._create_widgets()
+        self.set_language(self.lang)
         self._setup_logging_poller()
         self._setup_periodic_status_checker()
 
@@ -223,37 +452,61 @@ class DataRescueApp:
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+    def _t(self, key: str, **kwargs: object) -> str:
+        return tr(key, self.lang, **kwargs)
+
     def _create_widgets(self) -> None:
+        self.root.minsize(980, 700)
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=1)
 
         # Top Bar: Header and Active State
-        header_frame = ttk.Frame(self.root, padding=(16, 12, 16, 8))
+        header_frame = ttk.Frame(self.root, padding=(16, 10, 16, 8))
         header_frame.grid(row=0, column=0, sticky="ew")
         header_frame.columnconfigure(1, weight=1)
 
-        title_label = ttk.Label(
-            header_frame,
-            text="macOS Data Rescue",
+        title_box = ttk.Frame(header_frame)
+        title_box.grid(row=0, column=0, sticky="w")
+
+        self.title_label = ttk.Label(
+            title_box,
+            text="",
             font=("System", 18, "bold")
         )
-        title_label.grid(row=0, column=0, sticky="w")
+        self.title_label.pack(anchor="w")
 
-        subtitle_label = ttk.Label(
-            header_frame,
-            text="Service Technician Console (Share Disk / Target Disk Recovery)",
+        self.subtitle_label = ttk.Label(
+            title_box,
+            text="",
             font=("System", 11)
         )
-        subtitle_label.grid(row=1, column=0, sticky="w")
+        self.subtitle_label.pack(anchor="w")
 
-        # Top Status Indicator
+        # Top Right Controls: Language Switcher and Status Badge
+        top_right_box = ttk.Frame(header_frame)
+        top_right_box.grid(row=0, column=1, sticky="e")
+
+        self.lbl_lang_switch = ttk.Label(top_right_box, text="", font=("System", 11))
+        self.lbl_lang_switch.pack(side="left", padx=(0, 6))
+
+        self.lang_var = tk.StringVar(value="Čeština" if self.lang == "cs" else "English")
+        self.lang_combo = ttk.Combobox(
+            top_right_box,
+            textvariable=self.lang_var,
+            values=["Čeština", "English"],
+            state="readonly",
+            width=9
+        )
+        self.lang_combo.pack(side="left", padx=(0, 16))
+        self.lang_combo.bind("<<ComboboxSelected>>", self._on_language_changed)
+
         self.top_status_badge = ttk.Label(
-            header_frame,
+            top_right_box,
             textvariable=self.status_state_var,
             font=("System", 12, "bold"),
             padding=(10, 4)
         )
-        self.top_status_badge.grid(row=0, column=1, rowspan=2, sticky="e")
+        self.top_status_badge.pack(side="left")
 
         # Notebook (Tabs)
         self.notebook = ttk.Notebook(self.root)
@@ -264,10 +517,10 @@ class DataRescueApp:
         self.tab_verify = ttk.Frame(self.notebook, padding=12)
         self.tab_reports = ttk.Frame(self.notebook, padding=12)
 
-        self.notebook.add(self.tab_setup, text=" 1. Setup & Preflight ")
-        self.notebook.add(self.tab_rescue, text=" 2. Phased Rescue & Live Progress ")
-        self.notebook.add(self.tab_verify, text=" 3. Verification & Duplicates ")
-        self.notebook.add(self.tab_reports, text=" 4. Customer & Service Reports ")
+        self.notebook.add(self.tab_setup, text="")
+        self.notebook.add(self.tab_rescue, text="")
+        self.notebook.add(self.tab_verify, text="")
+        self.notebook.add(self.tab_reports, text="")
 
         self._build_setup_tab()
         self._build_rescue_tab()
@@ -282,103 +535,111 @@ class DataRescueApp:
         frame.columnconfigure(1, weight=1)
 
         # Paths Group
-        paths_group = ttk.LabelFrame(frame, text="Rescue Paths Configuration", padding=12)
-        paths_group.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 10))
-        paths_group.columnconfigure(1, weight=1)
+        self.paths_group = ttk.LabelFrame(frame, text="", padding=12)
+        self.paths_group.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 10))
+        self.paths_group.columnconfigure(1, weight=1)
 
         # Source
-        ttk.Label(paths_group, text="Source Path:").grid(row=0, column=0, sticky="w", pady=4)
-        source_entry = ttk.Entry(paths_group, textvariable=self.source_var)
+        self.lbl_src = ttk.Label(self.paths_group, text="")
+        self.lbl_src.grid(row=0, column=0, sticky="w", pady=4)
+        source_entry = ttk.Entry(self.paths_group, textvariable=self.source_var)
         source_entry.grid(row=0, column=1, sticky="ew", padx=6, pady=4)
-        ttk.Button(paths_group, text="Browse...", command=self._browse_source).grid(row=0, column=2, pady=4)
+        self.btn_browse_src = ttk.Button(self.paths_group, text="", command=self._browse_source)
+        self.btn_browse_src.grid(row=0, column=2, pady=4)
 
-        source_hint = ttk.Label(
-            paths_group,
-            text="E.g. /Volumes/Macintosh HD - Data/Users/customer (mounted via Share Disk / Target Disk)",
+        self.source_hint = ttk.Label(
+            self.paths_group,
+            text="",
             font=("System", 10),
             foreground="gray"
         )
-        source_hint.grid(row=1, column=1, sticky="w", padx=6, pady=(0, 4))
+        self.source_hint.grid(row=1, column=1, sticky="w", padx=6, pady=(0, 4))
 
         # Destination
-        ttk.Label(paths_group, text="Destination Path:").grid(row=2, column=0, sticky="w", pady=4)
-        dest_entry = ttk.Entry(paths_group, textvariable=self.dest_var)
+        self.lbl_dst = ttk.Label(self.paths_group, text="")
+        self.lbl_dst.grid(row=2, column=0, sticky="w", pady=4)
+        dest_entry = ttk.Entry(self.paths_group, textvariable=self.dest_var)
         dest_entry.grid(row=2, column=1, sticky="ew", padx=6, pady=4)
-        ttk.Button(paths_group, text="Browse...", command=self._browse_dest).grid(row=2, column=2, pady=4)
+        self.btn_browse_dst = ttk.Button(self.paths_group, text="", command=self._browse_dest)
+        self.btn_browse_dst.grid(row=2, column=2, pady=4)
 
-        dest_hint = ttk.Label(
-            paths_group,
-            text="E.g. /Volumes/RecoverySSD/Customer/user-data (on service recovery SSD, outside source)",
+        self.dest_hint = ttk.Label(
+            self.paths_group,
+            text="",
             font=("System", 10),
             foreground="gray"
         )
-        dest_hint.grid(row=3, column=1, sticky="w", padx=6, pady=(0, 4))
+        self.dest_hint.grid(row=3, column=1, sticky="w", padx=6, pady=(0, 4))
 
         # Job Directory
-        ttk.Label(paths_group, text="Job Directory:").grid(row=4, column=0, sticky="w", pady=4)
-        job_entry = ttk.Entry(paths_group, textvariable=self.job_dir_var)
+        self.lbl_job = ttk.Label(self.paths_group, text="")
+        self.lbl_job.grid(row=4, column=0, sticky="w", pady=4)
+        job_entry = ttk.Entry(self.paths_group, textvariable=self.job_dir_var)
         job_entry.grid(row=4, column=1, sticky="ew", padx=6, pady=4)
-        ttk.Button(paths_group, text="Browse...", command=self._browse_job_dir).grid(row=4, column=2, pady=4)
+        self.btn_browse_job = ttk.Button(self.paths_group, text="", command=self._browse_job_dir)
+        self.btn_browse_job.grid(row=4, column=2, pady=4)
 
-        job_hint = ttk.Label(
-            paths_group,
-            text="Holds manifest.sqlite and logs, e.g. /Volumes/RecoverySSD/Customer/.rescue (outside source)",
+        self.job_hint = ttk.Label(
+            self.paths_group,
+            text="",
             font=("System", 10),
             foreground="gray"
         )
-        job_hint.grid(row=5, column=1, sticky="w", padx=6, pady=(0, 4))
+        self.job_hint.grid(row=5, column=1, sticky="w", padx=6, pady=(0, 4))
 
         # Profile & Excludes
-        profile_frame = ttk.Frame(paths_group)
+        profile_frame = ttk.Frame(self.paths_group)
         profile_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(8, 4))
-        ttk.Label(profile_frame, text="Rescue Profile:").pack(side="left", padx=(0, 8))
-        ttk.Radiobutton(profile_frame, text="Customer Home (recommended)", value="customer-home",
-                        variable=self.profile_var, command=self._on_profile_change).pack(side="left", padx=6)
-        ttk.Radiobutton(profile_frame, text="Full Volume", value="volume",
-                        variable=self.profile_var, command=self._on_profile_change).pack(side="left", padx=6)
-        ttk.Radiobutton(profile_frame, text="Restore to Mac", value="restore",
-                        variable=self.profile_var, command=self._on_profile_change).pack(side="left", padx=6)
+        self.lbl_profile = ttk.Label(profile_frame, text="")
+        self.lbl_profile.pack(side="left", padx=(0, 8))
+        self.rb_profile_home = ttk.Radiobutton(profile_frame, text="", value="customer-home",
+                                               variable=self.profile_var, command=self._on_profile_change)
+        self.rb_profile_home.pack(side="left", padx=6)
+        self.rb_profile_volume = ttk.Radiobutton(profile_frame, text="", value="volume",
+                                                 variable=self.profile_var, command=self._on_profile_change)
+        self.rb_profile_volume.pack(side="left", padx=6)
+        self.rb_profile_restore = ttk.Radiobutton(profile_frame, text="", value="restore",
+                                                  variable=self.profile_var, command=self._on_profile_change)
+        self.rb_profile_restore.pack(side="left", padx=6)
 
         # Excludes entry for volume profile
-        self.excludes_frame = ttk.Frame(paths_group)
-        ttk.Label(self.excludes_frame, text="Volume Exclude Globs (comma-separated):").pack(side="left", padx=(0, 8))
+        self.excludes_frame = ttk.Frame(self.paths_group)
+        self.lbl_vol_excludes = ttk.Label(self.excludes_frame, text="")
+        self.lbl_vol_excludes.pack(side="left", padx=(0, 8))
         ttk.Entry(self.excludes_frame, textvariable=self.volume_excludes_var, width=40).pack(side="left", fill="x", expand=True)
 
         # Action Buttons (Preflight / Init / Open Existing)
         btn_frame = ttk.Frame(frame)
         btn_frame.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 8))
 
-        self.btn_preflight = ttk.Button(btn_frame, text="Run Safety Preflight", command=self.run_preflight)
+        self.btn_preflight = ttk.Button(btn_frame, text="", command=self.run_preflight)
         self.btn_preflight.pack(side="left", padx=(0, 8))
 
-        self.btn_init = ttk.Button(btn_frame, text="Initialize Job Manifest", command=self.init_job)
+        self.btn_init = ttk.Button(btn_frame, text="", command=self.init_job)
         self.btn_init.pack(side="left", padx=(0, 8))
 
-        self.btn_open_job = ttk.Button(btn_frame, text="Open Existing Job Directory...", command=self.open_existing_job)
+        self.btn_open_job = ttk.Button(btn_frame, text="", command=self.open_existing_job)
         self.btn_open_job.pack(side="left", padx=(0, 8))
 
         # Preflight Results Table
-        results_group = ttk.LabelFrame(frame, text="Preflight Safety Checks & Health Report", padding=8)
-        results_group.grid(row=2, column=0, columnspan=3, sticky="nsew")
+        self.results_group = ttk.LabelFrame(frame, text="", padding=8)
+        self.results_group.grid(row=2, column=0, columnspan=3, sticky="nsew")
         frame.rowconfigure(2, weight=1)
-        results_group.columnconfigure(0, weight=1)
-        results_group.rowconfigure(0, weight=1)
+        self.results_group.columnconfigure(0, weight=1)
+        self.results_group.rowconfigure(0, weight=1)
 
         cols = ("level", "check", "detail")
-        self.preflight_tree = ttk.Treeview(results_group, columns=cols, show="headings", height=8)
-        self.preflight_tree.heading("level", text="Status")
-        self.preflight_tree.heading("check", text="Safety Check")
-        self.preflight_tree.heading("detail", text="Diagnostic Detail")
-        self.preflight_tree.column("level", width=80, anchor="center")
-        self.preflight_tree.column("check", width=180)
+        self.preflight_tree = ttk.Treeview(self.results_group, columns=cols, show="headings", height=8)
+        self.preflight_tree.column("level", width=90, anchor="center")
+        self.preflight_tree.column("check", width=190)
         self.preflight_tree.column("detail", width=550)
 
-        scrollbar = ttk.Scrollbar(results_group, orient="vertical", command=self.preflight_tree.yview)
+        scrollbar = ttk.Scrollbar(self.results_group, orient="vertical", command=self.preflight_tree.yview)
         self.preflight_tree.configure(yscrollcommand=scrollbar.set)
         self.preflight_tree.grid(row=0, column=0, sticky="nsew")
         scrollbar.grid(row=0, column=1, sticky="ns")
 
-        self.preflight_summary_label = ttk.Label(results_group, text="No preflight run yet.", font=("System", 11))
+        self.preflight_summary_label = ttk.Label(self.results_group, text="", font=("System", 11))
         self.preflight_summary_label.grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
     # -------------------------------------------------------------------------
@@ -390,12 +651,12 @@ class DataRescueApp:
         frame.rowconfigure(3, weight=1)
 
         # 1. Guided Next Step Card
-        guide_group = ttk.LabelFrame(frame, text="Smart Rescue Guide (Recommended Next Step)", padding=10)
-        guide_group.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        guide_group.columnconfigure(0, weight=1)
+        self.guide_group = ttk.LabelFrame(frame, text="", padding=10)
+        self.guide_group.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        self.guide_group.columnconfigure(0, weight=1)
 
         self.guide_label = ttk.Label(
-            guide_group,
+            self.guide_group,
             textvariable=self.guide_text_var,
             font=("System", 12),
             wraplength=700
@@ -403,135 +664,142 @@ class DataRescueApp:
         self.guide_label.grid(row=0, column=0, sticky="w", padx=4, pady=4)
 
         self.btn_execute_next = ttk.Button(
-            guide_group,
-            text="Execute Recommended Step",
+            self.guide_group,
+            text="",
             command=self.execute_recommended_step
         )
         self.btn_execute_next.grid(row=0, column=1, sticky="e", padx=4, pady=4)
 
         # 2. Phase Selector & Control Center
-        control_group = ttk.LabelFrame(frame, text="Rescue Phase Control Center", padding=10)
-        control_group.grid(row=1, column=0, sticky="ew", pady=(0, 8))
-        control_group.columnconfigure(1, weight=1)
+        self.control_group = ttk.LabelFrame(frame, text="", padding=10)
+        self.control_group.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        self.control_group.columnconfigure(1, weight=1)
 
         # Phase selection
-        ttk.Label(control_group, text="Select Phase:").grid(row=0, column=0, sticky="w", pady=4)
-        self.phase_combo = ttk.Combobox(control_group, textvariable=self.phase_var, values=CORE_PHASES, state="readonly", width=18)
+        self.lbl_select_phase = ttk.Label(self.control_group, text="")
+        self.lbl_select_phase.grid(row=0, column=0, sticky="w", pady=4)
+        self.phase_combo = ttk.Combobox(self.control_group, textvariable=self.phase_var, values=CORE_PHASES, state="readonly", width=18)
         self.phase_combo.grid(row=0, column=1, sticky="w", padx=6, pady=4)
         self.phase_combo.bind("<<ComboboxSelected>>", self._on_phase_selected)
 
-        self.phase_desc_label = ttk.Label(control_group, text="", font=("System", 10), foreground="#0055aa")
+        self.phase_desc_label = ttk.Label(self.control_group, text="", font=("System", 10), foreground="#0055aa")
         self.phase_desc_label.grid(row=0, column=2, sticky="w", padx=6, pady=4)
 
         # Gated Phase Approval button
-        self.btn_approve = ttk.Button(control_group, text="Approve Phase...", command=self.approve_phase_dialog)
+        self.btn_approve = ttk.Button(self.control_group, text="", command=self.approve_phase_dialog)
         self.btn_approve.grid(row=0, column=3, sticky="e", padx=4, pady=4)
 
         # Execution buttons
-        btn_action_frame = ttk.Frame(control_group)
+        btn_action_frame = ttk.Frame(self.control_group)
         btn_action_frame.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(8, 4))
 
-        self.btn_scan = ttk.Button(btn_action_frame, text="1. Scan Phase", command=self.start_scan)
+        self.btn_scan = ttk.Button(btn_action_frame, text="", command=self.start_scan)
         self.btn_scan.pack(side="left", padx=(0, 8))
 
-        self.btn_copy = ttk.Button(btn_action_frame, text="2. Copy / Resume Phase", command=self.start_copy)
+        self.btn_copy = ttk.Button(btn_action_frame, text="", command=self.start_copy)
         self.btn_copy.pack(side="left", padx=(0, 8))
 
-        self.btn_stop = ttk.Button(btn_action_frame, text="Stop / Pause Rescue", command=self.stop_current_operation, state="disabled")
+        self.btn_stop = ttk.Button(btn_action_frame, text="", command=self.stop_current_operation, state="disabled")
         self.btn_stop.pack(side="left", padx=(0, 16))
 
         # Checkbox & Options
-        ttk.Checkbutton(
+        self.chk_caffeinate = ttk.Checkbutton(
             btn_action_frame,
-            text="Keep Mac Awake (caffeinate)",
+            text="",
             variable=self.caffeinate_var
-        ).pack(side="left", padx=8)
+        )
+        self.chk_caffeinate.pack(side="left", padx=8)
 
         # Timeouts config frame
-        opt_frame = ttk.Frame(control_group)
+        opt_frame = ttk.Frame(self.control_group)
         opt_frame.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(4, 0))
 
-        ttk.Label(opt_frame, text="Per-File Timeout (s):").pack(side="left", padx=(0, 4))
+        self.lbl_file_timeout = ttk.Label(opt_frame, text="")
+        self.lbl_file_timeout.pack(side="left", padx=(0, 4))
         ttk.Entry(opt_frame, textvariable=self.file_timeout_var, width=6).pack(side="left", padx=(0, 12))
 
-        ttk.Label(opt_frame, text="Scan Budget (s):").pack(side="left", padx=(0, 4))
+        self.lbl_scan_timeout = ttk.Label(opt_frame, text="")
+        self.lbl_scan_timeout.pack(side="left", padx=(0, 4))
         ttk.Entry(opt_frame, textvariable=self.scan_timeout_var, width=6).pack(side="left", padx=(0, 12))
 
-        ttk.Label(opt_frame, text="Limit (optional):").pack(side="left", padx=(0, 4))
+        self.lbl_limit = ttk.Label(opt_frame, text="")
+        self.lbl_limit.pack(side="left", padx=(0, 4))
         ttk.Entry(opt_frame, textvariable=self.limit_var, width=6).pack(side="left", padx=(0, 12))
 
         # 3. Telemetry & Live Dashboard
-        dash_group = ttk.LabelFrame(frame, text="Live Rescue Telemetry & Metrics", padding=10)
-        dash_group.grid(row=2, column=0, sticky="ew", pady=(0, 8))
-        dash_group.columnconfigure(0, weight=1)
+        self.dash_group = ttk.LabelFrame(frame, text="", padding=10)
+        self.dash_group.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        self.dash_group.columnconfigure(0, weight=1)
 
         # Progress bar: Transferred Bytes
-        prog_bytes_frame = ttk.Frame(dash_group)
+        prog_bytes_frame = ttk.Frame(self.dash_group)
         prog_bytes_frame.grid(row=0, column=0, sticky="ew", pady=2)
         prog_bytes_frame.columnconfigure(1, weight=1)
-        ttk.Label(prog_bytes_frame, text="Data Volume:", width=14).grid(row=0, column=0, sticky="w")
+        self.lbl_data_vol_title = ttk.Label(prog_bytes_frame, text="", width=15)
+        self.lbl_data_vol_title.grid(row=0, column=0, sticky="w")
         self.prog_bytes = ttk.Progressbar(prog_bytes_frame, mode="determinate")
         self.prog_bytes.grid(row=0, column=1, sticky="ew", padx=6)
-        self.lbl_bytes_prog = ttk.Label(prog_bytes_frame, text="0 B / 0 B (0%)", width=22, anchor="e")
+        self.lbl_bytes_prog = ttk.Label(prog_bytes_frame, text="0 B / 0 B (0%)", width=24, anchor="e")
         self.lbl_bytes_prog.grid(row=0, column=2, sticky="e")
 
         # Progress bar: Files
-        prog_files_frame = ttk.Frame(dash_group)
+        prog_files_frame = ttk.Frame(self.dash_group)
         prog_files_frame.grid(row=1, column=0, sticky="ew", pady=2)
         prog_files_frame.columnconfigure(1, weight=1)
-        ttk.Label(prog_files_frame, text="File Count:", width=14).grid(row=0, column=0, sticky="w")
+        self.lbl_file_cnt_title = ttk.Label(prog_files_frame, text="", width=15)
+        self.lbl_file_cnt_title.grid(row=0, column=0, sticky="w")
         self.prog_files = ttk.Progressbar(prog_files_frame, mode="determinate")
         self.prog_files.grid(row=0, column=1, sticky="ew", padx=6)
-        self.lbl_files_prog = ttk.Label(prog_files_frame, text="0 / 0", width=22, anchor="e")
+        self.lbl_files_prog = ttk.Label(prog_files_frame, text="0 / 0", width=24, anchor="e")
         self.lbl_files_prog.grid(row=0, column=2, sticky="e")
 
         # Metrics row: Speed, ETA, Current File
-        metrics_row = ttk.Frame(dash_group)
+        metrics_row = ttk.Frame(self.dash_group)
         metrics_row.grid(row=2, column=0, sticky="ew", pady=(6, 4))
         metrics_row.columnconfigure(2, weight=1)
 
-        self.lbl_speed = ttk.Label(metrics_row, text="Speed: 0.0 MB/s", font=("System", 11, "bold"))
+        self.lbl_speed = ttk.Label(metrics_row, text="", font=("System", 11, "bold"))
         self.lbl_speed.grid(row=0, column=0, sticky="w", padx=(0, 16))
 
-        self.lbl_eta = ttk.Label(metrics_row, text="ETA: —", font=("System", 11))
+        self.lbl_eta = ttk.Label(metrics_row, text="", font=("System", 11))
         self.lbl_eta.grid(row=0, column=1, sticky="w", padx=(0, 16))
 
-        self.lbl_current_file = ttk.Label(metrics_row, text="Current file: —", font=("System", 10), foreground="#444444")
+        self.lbl_current_file = ttk.Label(metrics_row, text="", font=("System", 10), foreground="#444444")
         self.lbl_current_file.grid(row=0, column=2, sticky="ew")
 
         # Metric Badges Grid
-        badges_frame = ttk.Frame(dash_group)
+        badges_frame = ttk.Frame(self.dash_group)
         badges_frame.grid(row=3, column=0, sticky="ew", pady=(6, 0))
 
-        self.badge_copied = self._create_badge(badges_frame, "Copied", "#1b8a36")
+        self.badge_copied = self._create_badge(badges_frame, "#1b8a36")
         self.badge_copied.pack(side="left", padx=4)
 
-        self.badge_fallback = self._create_badge(badges_frame, "From Fallback", "#0e7490")
+        self.badge_fallback = self._create_badge(badges_frame, "#0e7490")
         self.badge_fallback.pack(side="left", padx=4)
 
-        self.badge_pending = self._create_badge(badges_frame, "Pending", "#2563eb")
+        self.badge_pending = self._create_badge(badges_frame, "#2563eb")
         self.badge_pending.pack(side="left", padx=4)
 
-        self.badge_timed_out = self._create_badge(badges_frame, "Timed Out", "#d97706")
+        self.badge_timed_out = self._create_badge(badges_frame, "#d97706")
         self.badge_timed_out.pack(side="left", padx=4)
 
-        self.badge_failed = self._create_badge(badges_frame, "Failed", "#dc2626")
+        self.badge_failed = self._create_badge(badges_frame, "#dc2626")
         self.badge_failed.pack(side="left", padx=4)
 
-        self.badge_compressed = self._create_badge(badges_frame, "Compressed Flag", "#7c3aed")
+        self.badge_compressed = self._create_badge(badges_frame, "#7c3aed")
         self.badge_compressed.pack(side="left", padx=4)
 
-        self.badge_skipped = self._create_badge(badges_frame, "Skipped", "#6b7280")
+        self.badge_skipped = self._create_badge(badges_frame, "#6b7280")
         self.badge_skipped.pack(side="left", padx=4)
 
         # 4. Live Log Console
-        log_group = ttk.LabelFrame(frame, text="Live Rescue Activity & Console Log", padding=8)
-        log_group.grid(row=3, column=0, sticky="nsew")
-        log_group.columnconfigure(0, weight=1)
-        log_group.rowconfigure(0, weight=1)
+        self.log_group = ttk.LabelFrame(frame, text="", padding=8)
+        self.log_group.grid(row=3, column=0, sticky="nsew")
+        self.log_group.columnconfigure(0, weight=1)
+        self.log_group.rowconfigure(0, weight=1)
 
-        self.log_text = tk.Text(log_group, wrap="char", height=9, font=("Menlo", 10), bg="#1e1e1e", fg="#e0e0e0")
-        log_scroll = ttk.Scrollbar(log_group, orient="vertical", command=self.log_text.yview)
+        self.log_text = tk.Text(self.log_group, wrap="char", height=9, font=("Menlo", 10), bg="#1e1e1e", fg="#e0e0e0")
+        log_scroll = ttk.Scrollbar(self.log_group, orient="vertical", command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=log_scroll.set)
         self.log_text.grid(row=0, column=0, sticky="nsew")
         log_scroll.grid(row=0, column=1, sticky="ns")
@@ -543,16 +811,15 @@ class DataRescueApp:
         self.log_text.tag_configure("warn", foreground="#facc15")
         self.log_text.tag_configure("error", foreground="#f87171")
 
-        log_controls = ttk.Frame(log_group)
+        log_controls = ttk.Frame(self.log_group)
         log_controls.grid(row=1, column=0, sticky="ew", pady=(4, 0))
-        ttk.Button(log_controls, text="Clear Log", command=self._clear_log).pack(side="right")
+        self.btn_clear_log = ttk.Button(log_controls, text="", command=self._clear_log)
+        self.btn_clear_log.pack(side="right")
 
-        self._on_phase_selected(None)
-
-    def _create_badge(self, parent: ttk.Frame, title: str, color: str) -> ttk.Label:
+    def _create_badge(self, parent: ttk.Frame, color: str) -> ttk.Label:
         lbl = ttk.Label(
             parent,
-            text=f"{title}: 0",
+            text="",
             font=("System", 10, "bold"),
             foreground=color,
             padding=(6, 2),
@@ -569,47 +836,47 @@ class DataRescueApp:
         frame.rowconfigure(1, weight=1)
 
         # Verification Card
-        verify_group = ttk.LabelFrame(frame, text="Destination Integrity Verification (SHA256)", padding=10)
-        verify_group.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        verify_group.columnconfigure(1, weight=1)
+        self.verify_group = ttk.LabelFrame(frame, text="", padding=10)
+        self.verify_group.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        self.verify_group.columnconfigure(1, weight=1)
 
-        verify_info = ttk.Label(
-            verify_group,
-            text="Verifies destination files against SHA256 checksums recorded during copy, without rereading source media.",
+        self.verify_info = ttk.Label(
+            self.verify_group,
+            text="",
             font=("System", 11)
         )
-        verify_info.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        self.verify_info.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
 
-        self.btn_verify = ttk.Button(verify_group, text="Run Integrity Verification", command=self.start_verify)
+        self.btn_verify = ttk.Button(self.verify_group, text="", command=self.start_verify)
         self.btn_verify.grid(row=1, column=0, sticky="w", padx=(0, 10))
 
-        self.lbl_verify_summary = ttk.Label(verify_group, text="Status: Not verified yet.", font=("System", 11))
+        self.lbl_verify_summary = ttk.Label(self.verify_group, text="", font=("System", 11))
         self.lbl_verify_summary.grid(row=1, column=1, sticky="w")
 
         # Duplicates / Failed Files Card
-        dup_group = ttk.LabelFrame(frame, text="Failed Files & Metadata-Matched Duplicate Recovery", padding=10)
-        dup_group.grid(row=1, column=0, sticky="nsew")
-        dup_group.columnconfigure(0, weight=1)
-        dup_group.columnconfigure(1, weight=1)
-        dup_group.rowconfigure(1, weight=1)
+        self.dup_group = ttk.LabelFrame(frame, text="", padding=10)
+        self.dup_group.grid(row=1, column=0, sticky="nsew")
+        self.dup_group.columnconfigure(0, weight=1)
+        self.dup_group.columnconfigure(1, weight=1)
+        self.dup_group.rowconfigure(1, weight=1)
 
-        ttk.Label(
-            dup_group,
-            text="Files that failed or timed out during rescue can be recovered from identical candidates on the volume.",
+        self.lbl_dup_info = ttk.Label(
+            self.dup_group,
+            text="",
             font=("System", 11)
-        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        )
+        self.lbl_dup_info.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
 
         # Left: Failed Files List
-        left_frame = ttk.Frame(dup_group)
+        left_frame = ttk.Frame(self.dup_group)
         left_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 6))
         left_frame.columnconfigure(0, weight=1)
         left_frame.rowconfigure(1, weight=1)
 
-        ttk.Label(left_frame, text="Failed / Timed Out Files:", font=("System", 11, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.lbl_failed_title = ttk.Label(left_frame, text="", font=("System", 11, "bold"))
+        self.lbl_failed_title.grid(row=0, column=0, sticky="w", pady=(0, 4))
+
         self.failed_tree = ttk.Treeview(left_frame, columns=("path", "status", "size"), show="headings", height=8)
-        self.failed_tree.heading("path", text="Relative Path")
-        self.failed_tree.heading("status", text="Status")
-        self.failed_tree.heading("size", text="Size")
         self.failed_tree.column("path", width=220)
         self.failed_tree.column("status", width=80, anchor="center")
         self.failed_tree.column("size", width=80, anchor="e")
@@ -619,19 +886,19 @@ class DataRescueApp:
         self.failed_tree.grid(row=1, column=0, sticky="nsew")
         failed_scroll.grid(row=1, column=1, sticky="ns")
 
-        btn_find_dups = ttk.Button(left_frame, text="Find Duplicate Candidates", command=self.find_duplicates_for_selected)
-        btn_find_dups.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        self.btn_find_dups = ttk.Button(left_frame, text="", command=self.find_duplicates_for_selected)
+        self.btn_find_dups.grid(row=2, column=0, sticky="ew", pady=(6, 0))
 
         # Right: Candidate Matches List
-        right_frame = ttk.Frame(dup_group)
+        right_frame = ttk.Frame(self.dup_group)
         right_frame.grid(row=1, column=1, sticky="nsew", padx=(6, 0))
         right_frame.columnconfigure(0, weight=1)
         right_frame.rowconfigure(1, weight=1)
 
-        ttk.Label(right_frame, text="Matched Candidate Files:", font=("System", 11, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.lbl_cand_title = ttk.Label(right_frame, text="", font=("System", 11, "bold"))
+        self.lbl_cand_title.grid(row=0, column=0, sticky="w", pady=(0, 4))
+
         self.cand_tree = ttk.Treeview(right_frame, columns=("path", "mtime"), show="headings", height=8)
-        self.cand_tree.heading("path", text="Candidate Source Path")
-        self.cand_tree.heading("mtime", text="Modified Time")
         self.cand_tree.column("path", width=250)
         self.cand_tree.column("mtime", width=110)
 
@@ -642,7 +909,7 @@ class DataRescueApp:
 
         self.btn_recover_candidate = ttk.Button(
             right_frame,
-            text="Recover Selected File from Candidate",
+            text="",
             command=self.recover_from_candidate,
             state="disabled"
         )
@@ -657,59 +924,65 @@ class DataRescueApp:
         frame.rowconfigure(1, weight=1)
 
         # Customer Report Box
-        cust_group = ttk.LabelFrame(frame, text="Customer-Facing Recovery Report (Handoff Protocol)", padding=10)
-        cust_group.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        cust_group.columnconfigure(1, weight=1)
+        self.cust_group = ttk.LabelFrame(frame, text="", padding=10)
+        self.cust_group.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        self.cust_group.columnconfigure(1, weight=1)
 
         # Options: Format & Language
-        fmt_frame = ttk.Frame(cust_group)
+        fmt_frame = ttk.Frame(self.cust_group)
         fmt_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=2)
 
         self.cust_format_var = tk.StringVar(value="pdf")
-        ttk.Label(fmt_frame, text="Report Format:").pack(side="left", padx=(0, 6))
-        ttk.Radiobutton(fmt_frame, text="PDF Document (.pdf)", value="pdf", variable=self.cust_format_var).pack(side="left", padx=6)
+        self.lbl_rep_fmt = ttk.Label(fmt_frame, text="")
+        self.lbl_rep_fmt.pack(side="left", padx=(0, 6))
+        ttk.Radiobutton(fmt_frame, text="PDF (.pdf)", value="pdf", variable=self.cust_format_var).pack(side="left", padx=6)
         ttk.Radiobutton(fmt_frame, text="Markdown (.md)", value="markdown", variable=self.cust_format_var).pack(side="left", padx=6)
 
-        self.cust_lang_var = tk.StringVar(value="cs")
-        ttk.Label(fmt_frame, text="Language:").pack(side="left", padx=(16, 6))
-        ttk.Radiobutton(fmt_frame, text="Czech (Čeština)", value="cs", variable=self.cust_lang_var).pack(side="left", padx=6)
-        ttk.Radiobutton(fmt_frame, text="English", value="en", variable=self.cust_lang_var).pack(side="left", padx=6)
+        self.cust_lang_var = tk.StringVar(value="cs" if self.lang == "cs" else "en")
+        self.lbl_rep_lang = ttk.Label(fmt_frame, text="")
+        self.lbl_rep_lang.pack(side="left", padx=(16, 6))
+        self.rb_lang_cs = ttk.Radiobutton(fmt_frame, text="", value="cs", variable=self.cust_lang_var)
+        self.rb_lang_cs.pack(side="left", padx=6)
+        self.rb_lang_en = ttk.Radiobutton(fmt_frame, text="", value="en", variable=self.cust_lang_var)
+        self.rb_lang_en.pack(side="left", padx=6)
 
-        btn_cust_frame = ttk.Frame(cust_group)
+        btn_cust_frame = ttk.Frame(self.cust_group)
         btn_cust_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 2))
 
         self.btn_gen_cust_report = ttk.Button(
             btn_cust_frame,
-            text="Generate Customer Handoff Report",
+            text="",
             command=self.generate_customer_report
         )
         self.btn_gen_cust_report.pack(side="left", padx=(0, 8))
 
         self.btn_open_report_file = ttk.Button(
             btn_cust_frame,
-            text="Open Generated Report in Finder / Viewer",
+            text="",
             command=self.open_last_report,
             state="disabled"
         )
         self.btn_open_report_file.pack(side="left")
 
-        self.lbl_cust_report_status = ttk.Label(cust_group, text="", font=("System", 10), foreground="#007700")
+        self.lbl_cust_report_status = ttk.Label(self.cust_group, text="", font=("System", 10), foreground="#007700")
         self.lbl_cust_report_status.grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         # Technician Full Report Box
-        tech_group = ttk.LabelFrame(frame, text="Detailed Service / Technician Report", padding=10)
-        tech_group.grid(row=1, column=0, sticky="nsew")
-        tech_group.columnconfigure(0, weight=1)
-        tech_group.rowconfigure(1, weight=1)
+        self.tech_group = ttk.LabelFrame(frame, text="", padding=10)
+        self.tech_group.grid(row=1, column=0, sticky="nsew")
+        self.tech_group.columnconfigure(0, weight=1)
+        self.tech_group.rowconfigure(1, weight=1)
 
-        tech_btn_frame = ttk.Frame(tech_group)
+        tech_btn_frame = ttk.Frame(self.tech_group)
         tech_btn_frame.grid(row=0, column=0, sticky="ew", pady=(0, 6))
 
-        ttk.Button(tech_btn_frame, text="Refresh Technician Report", command=self.load_tech_report).pack(side="left", padx=(0, 8))
-        ttk.Button(tech_btn_frame, text="Save Report to File...", command=self.save_tech_report).pack(side="left")
+        self.btn_refresh_tech = ttk.Button(tech_btn_frame, text="", command=self.load_tech_report)
+        self.btn_refresh_tech.pack(side="left", padx=(0, 8))
+        self.btn_save_tech = ttk.Button(tech_btn_frame, text="", command=self.save_tech_report)
+        self.btn_save_tech.pack(side="left")
 
-        self.tech_report_text = tk.Text(tech_group, wrap="word", font=("Menlo", 10), bg="#f8f9fa", fg="#1f2937")
-        tech_scroll = ttk.Scrollbar(tech_group, orient="vertical", command=self.tech_report_text.yview)
+        self.tech_report_text = tk.Text(self.tech_group, wrap="word", font=("Menlo", 10), bg="#f8f9fa", fg="#1f2937")
+        tech_scroll = ttk.Scrollbar(self.tech_group, orient="vertical", command=self.tech_report_text.yview)
         self.tech_report_text.configure(yscrollcommand=tech_scroll.set)
         self.tech_report_text.grid(row=1, column=0, sticky="nsew")
         tech_scroll.grid(row=1, column=1, sticky="ns")
@@ -717,15 +990,129 @@ class DataRescueApp:
         self.last_customer_report_path: Path | None = None
 
     # -------------------------------------------------------------------------
+    # Localization Engine
+    # -------------------------------------------------------------------------
+    def set_language(self, lang: str) -> None:
+        """Switch language dynamically between 'cs' and 'en'."""
+        if lang not in ("cs", "en"):
+            lang = "cs"
+        self.lang = lang
+        self.lang_var.set("Čeština" if lang == "cs" else "English")
+        self.cust_lang_var.set(lang)
+
+        # Window & Header
+        self.root.title(self._t("app_title"))
+        self.title_label.configure(text="macOS Data Rescue")
+        self.subtitle_label.configure(text=self._t("app_subtitle"))
+        self.lbl_lang_switch.configure(text=self._t("language_label"))
+
+        # Notebook tabs
+        self.notebook.tab(0, text=self._t("tab_setup"))
+        self.notebook.tab(1, text=self._t("tab_rescue"))
+        self.notebook.tab(2, text=self._t("tab_verify"))
+        self.notebook.tab(3, text=self._t("tab_reports"))
+
+        # Tab 1: Setup & Preflight
+        self.paths_group.configure(text=self._t("paths_title"))
+        self.lbl_src.configure(text=self._t("source_path"))
+        self.source_hint.configure(text=self._t("source_hint"))
+        self.btn_browse_src.configure(text=self._t("browse"))
+
+        self.lbl_dst.configure(text=self._t("dest_path"))
+        self.dest_hint.configure(text=self._t("dest_hint"))
+        self.btn_browse_dst.configure(text=self._t("browse"))
+
+        self.lbl_job.configure(text=self._t("job_path"))
+        self.job_hint.configure(text=self._t("job_hint"))
+        self.btn_browse_job.configure(text=self._t("browse"))
+
+        self.lbl_profile.configure(text=self._t("profile"))
+        self.rb_profile_home.configure(text=self._t("profile_home"))
+        self.rb_profile_volume.configure(text=self._t("profile_volume"))
+        self.rb_profile_restore.configure(text=self._t("profile_restore"))
+        self.lbl_vol_excludes.configure(text=self._t("volume_excludes"))
+
+        self.btn_preflight.configure(text=self._t("btn_preflight"))
+        self.btn_init.configure(text=self._t("btn_init"))
+        self.btn_open_job.configure(text=self._t("btn_open_job"))
+
+        self.results_group.configure(text=self._t("preflight_title"))
+        self.preflight_tree.heading("level", text=self._t("col_status"))
+        self.preflight_tree.heading("check", text=self._t("col_check"))
+        self.preflight_tree.heading("detail", text=self._t("col_detail"))
+
+        # Tab 2: Phased Rescue
+        self.guide_group.configure(text=self._t("guide_title"))
+        self.btn_execute_next.configure(text=self._t("btn_execute_next"))
+
+        self.control_group.configure(text=self._t("control_title"))
+        self.lbl_select_phase.configure(text=self._t("select_phase"))
+        self.btn_scan.configure(text=self._t("btn_scan"))
+        self.btn_copy.configure(text=self._t("btn_copy"))
+        self.btn_stop.configure(text=self._t("btn_stop"))
+        self.chk_caffeinate.configure(text=self._t("caffeinate"))
+        self.lbl_file_timeout.configure(text=self._t("per_file_timeout"))
+        self.lbl_scan_timeout.configure(text=self._t("scan_budget"))
+        self.lbl_limit.configure(text=self._t("limit_optional"))
+
+        self.dash_group.configure(text=self._t("telemetry_title"))
+        self.lbl_data_vol_title.configure(text=self._t("data_volume"))
+        self.lbl_file_cnt_title.configure(text=self._t("file_count"))
+        self.log_group.configure(text=self._t("log_title"))
+        self.btn_clear_log.configure(text=self._t("clear_log"))
+
+        # Tab 3: Verification & Duplicates
+        self.verify_group.configure(text=self._t("verify_title"))
+        self.verify_info.configure(text=self._t("verify_info"))
+        self.btn_verify.configure(text=self._t("btn_verify"))
+        self.lbl_verify_summary.configure(text=self._t("verify_status_default"))
+
+        self.dup_group.configure(text=self._t("dups_title"))
+        self.lbl_dup_info.configure(text=self._t("dups_info"))
+        self.lbl_failed_title.configure(text=self._t("failed_files_label"))
+        self.failed_tree.heading("path", text=self._t("col_path"))
+        self.failed_tree.heading("status", text=self._t("col_status"))
+        self.failed_tree.heading("size", text=self._t("col_size"))
+        self.btn_find_dups.configure(text=self._t("btn_find_dups"))
+
+        self.lbl_cand_title.configure(text=self._t("cands_label"))
+        self.cand_tree.heading("path", text=self._t("col_cand_path"))
+        self.cand_tree.heading("mtime", text=self._t("col_mtime"))
+        self.btn_recover_candidate.configure(text=self._t("btn_recover_cand"))
+
+        # Tab 4: Customer & Tech Reports
+        self.cust_group.configure(text=self._t("cust_report_title"))
+        self.lbl_rep_fmt.configure(text=self._t("report_format"))
+        self.lbl_rep_lang.configure(text=self._t("report_lang"))
+        self.rb_lang_cs.configure(text=self._t("lang_cs"))
+        self.rb_lang_en.configure(text=self._t("lang_en"))
+        self.btn_gen_cust_report.configure(text=self._t("btn_gen_cust_report"))
+        self.btn_open_report_file.configure(text=self._t("btn_open_report"))
+
+        self.tech_group.configure(text=self._t("tech_report_title"))
+        self.btn_refresh_tech.configure(text=self._t("btn_refresh_tech"))
+        self.btn_save_tech.configure(text=self._t("btn_save_tech"))
+
+        # Dynamic state refreshes
+        self._on_phase_selected(None)
+        self._update_telemetry()
+        self._update_guide()
+
+    def _on_language_changed(self, _event: object) -> None:
+        val = self.lang_var.get()
+        new_lang = "cs" if val == "Čeština" else "en"
+        self.set_language(new_lang)
+
+    # -------------------------------------------------------------------------
     # UI Callbacks & Operations
     # -------------------------------------------------------------------------
     def _browse_source(self) -> None:
-        path = filedialog.askdirectory(title="Select Mounted Source User Home Directory")
+        path = filedialog.askdirectory(title=self._t("select_source_title"))
         if path:
             self.source_var.set(path)
 
     def _browse_dest(self) -> None:
-        path = filedialog.askdirectory(title="Select Recovery Destination Directory")
+        path = filedialog.askdirectory(title=self._t("select_dest_title"))
         if path:
             self.dest_var.set(path)
             # Auto-suggest job directory if empty
@@ -734,7 +1121,7 @@ class DataRescueApp:
                 self.job_dir_var.set(str(p.parent / ".rescue"))
 
     def _browse_job_dir(self) -> None:
-        path = filedialog.askdirectory(title="Select Job Directory (.rescue)")
+        path = filedialog.askdirectory(title=self._t("select_job_title"))
         if path:
             self.job_dir_var.set(path)
             if manifest_path(Path(path)).exists():
@@ -748,18 +1135,19 @@ class DataRescueApp:
 
     def _on_phase_selected(self, _event: object) -> None:
         phase = self.phase_var.get()
-        desc = PHASE_DESCRIPTIONS.get(phase, "")
+        desc_dict = PHASE_DESCRIPTIONS.get(self.lang, PHASE_DESCRIPTIONS["cs"])
+        desc = desc_dict.get(phase, "")
         self.phase_desc_label.configure(text=desc)
         job_dir = self.get_job_dir()
         if job_dir and manifest_path(job_dir).exists():
             if phase in GATED_PHASES:
                 approved = load_approval(job_dir, phase)
                 if approved:
-                    self.btn_approve.configure(text=f"Approved ({approved})", state="disabled")
+                    self.btn_approve.configure(text=self._t("approved_badge", by=approved), state="disabled")
                 else:
-                    self.btn_approve.configure(text="Approve Phase...", state="normal")
+                    self.btn_approve.configure(text=self._t("btn_approve"), state="normal")
             else:
-                self.btn_approve.configure(text="No Approval Needed", state="disabled")
+                self.btn_approve.configure(text=self._t("no_approval_needed"), state="disabled")
 
     def get_job_dir(self) -> Path | None:
         val = self.job_dir_var.get().strip()
@@ -776,7 +1164,7 @@ class DataRescueApp:
     def run_preflight(self) -> None:
         job_dir = self.get_job_dir()
         if not job_dir:
-            messagebox.showerror("Missing Path", "Please specify a Job Directory.")
+            messagebox.showerror("Error", "Please specify a Job Directory.")
             return
 
         source = self.get_source()
@@ -784,7 +1172,7 @@ class DataRescueApp:
 
         has_manifest = manifest_path(job_dir).exists()
         if not has_manifest and (not source or not dest):
-            messagebox.showerror("Missing Paths", "Preflight before initialization requires Source and Destination paths.")
+            messagebox.showerror("Error", "Preflight before initialization requires Source and Destination paths.")
             return
 
         self.preflight_tree.delete(*self.preflight_tree.get_children())
@@ -803,12 +1191,12 @@ class DataRescueApp:
             fail_count = sum(1 for c in summary.checks if c.level == "fail")
             if summary.failed:
                 self.preflight_summary_label.configure(
-                    text=f"Preflight FAILED ({fail_count} failures, {warn_count} warnings). Fix failures before starting rescue.",
+                    text=self._t("preflight_fail", fail=fail_count, warn=warn_count),
                     foreground="#dc2626"
                 )
             else:
                 self.preflight_summary_label.configure(
-                    text=f"Preflight PASSED ({len(summary.checks)} checks, {warn_count} warnings). Ready to rescue.",
+                    text=self._t("preflight_ok", checks=len(summary.checks), warn=warn_count),
                     foreground="#1b8a36"
                 )
         except Exception as exc:
@@ -821,7 +1209,7 @@ class DataRescueApp:
         profile = self.profile_var.get()
 
         if not job_dir or not source or not dest:
-            messagebox.showerror("Missing Information", "Source, Destination, and Job Directory are all required.")
+            messagebox.showerror("Error", "Source, Destination, and Job Directory are all required.")
             return
 
         excludes = tuple(p.strip() for p in self.volume_excludes_var.get().split(",") if p.strip())
@@ -841,7 +1229,7 @@ class DataRescueApp:
             messagebox.showerror("Initialization Error", str(exc))
 
     def open_existing_job(self) -> None:
-        path = filedialog.askdirectory(title="Select Existing Rescue Job Directory (.rescue)")
+        path = filedialog.askdirectory(title=self._t("select_job_title"))
         if path:
             p = Path(path)
             if manifest_path(p).exists():
@@ -878,22 +1266,21 @@ class DataRescueApp:
             messagebox.showinfo("Info", f"Phase '{phase}' does not require approval.")
             return
 
-        # Simple prompt dialog
         dialog = tk.Toplevel(self.root)
-        dialog.title(f"Approve Gated Phase: {phase}")
-        dialog.geometry("460x200")
+        dialog.title(self._t("approve_dialog_title", phase=phase))
+        dialog.geometry("480x210")
         dialog.transient(self.root)
         dialog.grab_set()
 
         ttk.Label(
             dialog,
-            text=f"Phase '{phase}' contains sensitive or large data.\nRecord technician/customer approval to proceed:",
+            text=self._t("approve_dialog_text", phase=phase),
             font=("System", 11)
         ).pack(padx=16, pady=12, anchor="w")
 
         entry_frame = ttk.Frame(dialog)
         entry_frame.pack(padx=16, pady=6, fill="x")
-        ttk.Label(entry_frame, text="Approved By (Technician / Customer):").pack(anchor="w", pady=(0, 4))
+        ttk.Label(entry_frame, text=self._t("approve_by_label")).pack(anchor="w", pady=(0, 4))
         name_entry = ttk.Entry(entry_frame)
         name_entry.pack(fill="x")
         name_entry.focus()
@@ -911,8 +1298,8 @@ class DataRescueApp:
 
         btn_box = ttk.Frame(dialog)
         btn_box.pack(padx=16, pady=16, fill="x")
-        ttk.Button(btn_box, text="Confirm Approval", command=submit).pack(side="right", padx=(8, 0))
-        ttk.Button(btn_box, text="Cancel", command=dialog.destroy).pack(side="right")
+        ttk.Button(btn_box, text=self._t("btn_confirm_approval"), command=submit).pack(side="right", padx=(8, 0))
+        ttk.Button(btn_box, text=self._t("btn_cancel"), command=dialog.destroy).pack(side="right")
 
     # -------------------------------------------------------------------------
     # Command Executions
@@ -938,7 +1325,7 @@ class DataRescueApp:
         self.btn_execute_next.configure(state="disabled" if running else "normal")
         self.btn_verify.configure(state="disabled" if running else "normal")
         self.btn_stop.configure(state="normal" if running else "disabled")
-        self.status_state_var.set("RUNNING" if running else "IDLE")
+        self.status_state_var.set(self._t("state_running") if running else self._t("state_idle"))
 
     def _on_operation_done(self) -> None:
         self.caffeinate.stop()
@@ -949,7 +1336,7 @@ class DataRescueApp:
 
     def stop_current_operation(self) -> None:
         if self.runner.is_running:
-            if messagebox.askyesno("Confirm Stop", "Do you want to stop/pause the current rescue operation?\n\n(Progress committed to manifest will be preserved and can be resumed.)"):
+            if messagebox.askyesno(self._t("confirm_stop_title"), self._t("confirm_stop_msg")):
                 self.runner.cancel()
 
     def start_scan(self) -> None:
@@ -999,7 +1386,6 @@ class DataRescueApp:
             return
 
         text = next_text(job_dir)
-        # Parse recommended command line (e.g. macos-data-rescue scan ...)
         target_line = None
         for line in text.splitlines():
             line = line.strip()
@@ -1008,7 +1394,7 @@ class DataRescueApp:
                 break
 
         if not target_line:
-            messagebox.showinfo("Guide", f"Current recommendation:\n\n{text}")
+            messagebox.showinfo("Guide", f"{text}")
             return
 
         parts = shlex.split(target_line)
@@ -1017,7 +1403,7 @@ class DataRescueApp:
             cli_args = parts[idx + 1:]
             self._execute_cli(cli_args)
         else:
-            messagebox.showinfo("Guide", f"Please execute manually:\n{target_line}")
+            messagebox.showinfo("Guide", f"{target_line}")
 
     # -------------------------------------------------------------------------
     # Duplicates & Fallbacks
@@ -1154,12 +1540,10 @@ class DataRescueApp:
     def _setup_periodic_status_checker(self) -> None:
         def check() -> None:
             if not self.runner.is_running:
-                # If idle, update every 2 seconds
                 self._update_telemetry()
                 self._update_guide()
                 self.root.after(2000, check)
             else:
-                # If running, update every 500ms
                 self._update_telemetry()
                 self.root.after(500, check)
 
@@ -1185,13 +1569,13 @@ class DataRescueApp:
 
             total_rescued_cnt = copied_cnt + fallback_cnt
 
-            self.badge_copied.configure(text=f"Copied: {copied_cnt}")
-            self.badge_fallback.configure(text=f"Fallback: {fallback_cnt}")
-            self.badge_pending.configure(text=f"Pending: {pending_cnt}")
-            self.badge_timed_out.configure(text=f"Timed Out: {timed_out_cnt}")
-            self.badge_failed.configure(text=f"Failed: {failed_cnt}")
-            self.badge_compressed.configure(text=f"Compressed: {compressed_cnt}")
-            self.badge_skipped.configure(text=f"Skipped: {skipped_cnt}")
+            self.badge_copied.configure(text=f"{self._t('badge_copied')}: {copied_cnt}")
+            self.badge_fallback.configure(text=f"{self._t('badge_fallback')}: {fallback_cnt}")
+            self.badge_pending.configure(text=f"{self._t('badge_pending')}: {pending_cnt}")
+            self.badge_timed_out.configure(text=f"{self._t('badge_timed_out')}: {timed_out_cnt}")
+            self.badge_failed.configure(text=f"{self._t('badge_failed')}: {failed_cnt}")
+            self.badge_compressed.configure(text=f"{self._t('badge_compressed')}: {compressed_cnt}")
+            self.badge_skipped.configure(text=f"{self._t('badge_skipped')}: {skipped_cnt}")
 
             # File count progress
             self.prog_files.configure(maximum=max(total_files, 1), value=total_rescued_cnt)
@@ -1205,17 +1589,19 @@ class DataRescueApp:
                     self.status_state_var.set(state)
 
                 rate = snap.get("rate_bytes_s", 0)
-                self.lbl_speed.configure(text=f"Speed: {format_rate(rate)}")
+                self.lbl_speed.configure(text=self._t("speed", rate=format_rate(rate)))
 
                 eta = snap.get("eta_seconds")
-                self.lbl_eta.configure(text=f"ETA: {format_eta(eta)}")
+                self.lbl_eta.configure(text=self._t("eta", eta=format_eta(eta, self.lang)))
 
                 cur_file = snap.get("path") or "—"
                 cur_bytes = snap.get("current_bytes", 0)
                 if cur_file != "—":
-                    self.lbl_current_file.configure(text=f"File: {cur_file} ({format_size(cur_bytes)})")
+                    self.lbl_current_file.configure(
+                        text=self._t("current_file", file=f"{cur_file} ({format_size(cur_bytes)})")
+                    )
                 else:
-                    self.lbl_current_file.configure(text="File: —")
+                    self.lbl_current_file.configure(text=self._t("current_file", file="—"))
 
                 # Transferred bytes progress
                 transferred = snap.get("transferred_bytes", 0)
@@ -1227,13 +1613,17 @@ class DataRescueApp:
                     self.lbl_bytes_prog.configure(
                         text=f"{format_size(transferred)} / {format_size(total_known_bytes)} ({pct:.1f}%)"
                     )
+            else:
+                self.lbl_speed.configure(text=self._t("speed", rate="0.0 MB/s"))
+                self.lbl_eta.configure(text=self._t("eta", eta="—"))
+                self.lbl_current_file.configure(text=self._t("current_file", file="—"))
         except Exception:  # nosec B110
             pass
 
     def _update_guide(self) -> None:
         job_dir = self.get_job_dir()
         if not job_dir or not manifest_path(job_dir).exists():
-            self.guide_text_var.set("No job selected. Configure paths and click 'Initialize Job Manifest'.")
+            self.guide_text_var.set(self._t("guide_default"))
             return
         try:
             text = next_text(job_dir)
@@ -1255,17 +1645,17 @@ class DataRescueApp:
 
     def _on_close(self) -> None:
         if self.runner.is_running:
-            if not messagebox.askyesno("Exit Confirmation", "A rescue operation is currently in progress.\nAre you sure you want to stop it and exit?"):
+            if not messagebox.askyesno(self._t("confirm_close_title"), self._t("confirm_close_msg")):
                 return
             self.runner.cancel()
         self.caffeinate.stop()
         self.root.destroy()
 
 
-def run_gui(job_dir: Path | None = None, source: Path | None = None, dest: Path | None = None) -> int:
+def run_gui(job_dir: Path | None = None, source: Path | None = None, dest: Path | None = None, lang: str = "cs") -> int:
     """Launch the Tkinter application."""
     root = tk.Tk()
-    _app = DataRescueApp(root, initial_job_dir=job_dir, initial_source=source, initial_dest=dest)
+    _app = DataRescueApp(root, initial_job_dir=job_dir, initial_source=source, initial_dest=dest, lang=lang)
     root.mainloop()
     return 0
 
@@ -1278,9 +1668,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--job-dir", type=Path, help="Open an existing job directory.")
     parser.add_argument("--source", type=Path, help="Pre-fill source directory.")
     parser.add_argument("--dest", type=Path, help="Pre-fill destination directory.")
+    parser.add_argument("--lang", default="cs", choices=("cs", "en"), help="Interface language (cs or en).")
     args = parser.parse_args(argv)
 
-    return run_gui(job_dir=args.job_dir, source=args.source, dest=args.dest)
+    return run_gui(job_dir=args.job_dir, source=args.source, dest=args.dest, lang=args.lang)
 
 
 if __name__ == "__main__":
