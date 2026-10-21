@@ -33,6 +33,7 @@ The goal is simple: **one bad file must not stop the whole rescue**. The tool sc
 - `approve` records the operator/customer decision for a gated phase (`app-data`, `applications`, `full-home`, legacy `library`) with a timestamp and optional `--by` name. `scan` refuses gated phases until approved — including the legacy default no-`--phase` scan, which reaches `~/Library` — and `copy`/`resume` refuse selections containing unapproved gated rows (covers manifests from older versions).
 - `report` prints Markdown or JSON suitable for service notes, including per-file suspected iCloud placeholder warnings.
 - `customer-report` writes an English or Czech customer-facing Markdown/PDF handoff report into the visible recovery root.
+- `gui` launches a native macOS technician GUI (`macos-data-rescue-gui`) with zero external runtime dependencies, providing real-time telemetry, visual preflight checks, gated approvals, and customer report generation.
 
 ## Install / run locally
 
@@ -41,7 +42,11 @@ git clone https://github.com/vaclavik-xyz/macos-data-rescue.git
 cd macos-data-rescue
 uv sync
 uv run macos-data-rescue --help
+# Or launch the graphical user interface:
+uv run macos-data-rescue gui
 ```
+
+You can also double-click `macos-data-rescue.command` in macOS Finder to launch the GUI console directly.
 
 After the repository is public, you can also install the CLI directly from GitHub:
 
