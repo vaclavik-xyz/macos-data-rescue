@@ -57,6 +57,21 @@ The application has no runtime dependencies (Python standard library only). Deve
 
 ## How to run the software
 
+### Clean / Factory-Reset Mac (One-Click Setup)
+
+On a freshly installed Mac after a factory reset, **you do not need to install anything manually** (no Xcode Command Line Tools, no Homebrew, no admin/sudo passwords).
+
+1. Clone or copy the repository folder to the Mac (e.g. from a USB drive).
+2. Run the automated setup script or double-click the launcher:
+   ```bash
+   ./setup-fresh-mac.sh
+   ```
+   *Or simply double-click [macos-data-rescue.command](macos-data-rescue.command) in macOS Finder.*
+3. **Important (macOS Permission):** Grant Terminal **Full Disk Access** (Plný přístup k disku) in:  
+   *System Settings → Privacy & Security → Full Disk Access* (Nastavení systému → Soukromí a zabezpečení → Plný přístup k disku) so macOS allows reading customer home directories on the mounted disk.
+
+The script automatically downloads the lightweight portable runtime, sets up the environment in seconds, and opens the GUI.
+
 ### 1. Graphical User Interface (GUI Console) — Recommended for Service Technicians
 
 The GUI provides an interactive macOS dashboard with Finder folder pickers, preflight safety health checks, phased rescue workflows, sleep inhibition (`caffeinate`), live transfer speed / ETA telemetry, and one-click customer handoff reports in English or Czech.
