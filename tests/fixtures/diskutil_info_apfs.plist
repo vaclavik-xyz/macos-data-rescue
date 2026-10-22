@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>APFSContainerReference</key>
+	<string>disk9</string>
+	<key>Content</key>
+	<string>41504653-0000-11AA-AA11-00306543ECAC</string>
+	<key>DeviceIdentifier</key>
+	<string>disk9s1</string>
+	<key>DeviceNode</key>
+	<string>/dev/disk9s1</string>
+	<key>Encryption</key>
+	<false/>
+	<key>FileVault</key>
+	<false/>
+	<key>FilesystemName</key>
+	<string>APFS</string>
+	<key>FilesystemType</key>
+	<string>apfs</string>
+	<key>Internal</key>
+	<false/>
+	<key>Locked</key>
+	<false/>
+	<key>MountPoint</key>
+	<string>/Volumes/Data</string>
+	<key>RemovableMedia</key>
+	<false/>
+	<key>VolumeName</key>
+	<string>Data</string>
+	<key>VolumeUUID</key>
+	<string>A-1</string>
+	<key>Writable</key>
+	<false/>
+	<key>WritableMedia</key>
+	<true/>
+	<key>WritableVolume</key>
+	<false/>
+</dict>
+</plist>

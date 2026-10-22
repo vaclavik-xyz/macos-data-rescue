@@ -43,6 +43,27 @@ job directory on a reliable local disk; loss of the job disk itself prevents
 persisting a pause reason. Existing path validation and destination setup still
 involve parent-process filesystem calls and remain subject to kernel I/O hangs.
 
+## Volume identity (auto-reconnect groundwork)
+
+The first `copy`/`resume --auto-reconnect` that finds storage available records
+the source and destination volume identity (`diskutil info -plist` of the mount
+point: Volume UUID, mount point, filesystem type, network flag, read-only flag)
+in the manifest `config` key `volume_identities`. It is recorded once and never
+overwritten. Network filesystems (`smbfs`, `afpfs`, `nfs`, `webdav`) and volumes
+without a UUID are only ever waited for. A local volume whose lookup failed or
+timed out is not recorded as UUID-less; that run treats it as wait-only and the
+next run retries the lookup. Every `diskutil` call has a timeout (default 60 s).
+
+Open verification item (not yet tested on hardware): whether
+`diskutil mount readOnly <VolumeUUID>` on an unmounted APFS or HFS+ volume can
+make DiskArbitration run a filesystem check or repair (`fsck_apfs`/`fsck_hfs`)
+before mounting. What is known: macOS checks volumes it considers dirty before
+mounting them, and a read-only mount request is the safest mount path `diskutil`
+offers; whether that request also suppresses a repair pass has not been verified
+on a spare disk. Until it is, treat an automatic remount of a failing source as
+possibly triggering a check and prefer imaging (`ddrescue`) for disks that keep
+dropping off the bus.
+
 ## Isolated scan I/O
 
 `scan --job-dir JOB --io-timeout 30 [--timeout TOTAL] [--limit N]` performs
