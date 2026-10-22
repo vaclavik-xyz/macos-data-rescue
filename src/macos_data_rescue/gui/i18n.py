@@ -96,7 +96,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "msg_pause_reason": "Důvod: {reason}",
         "msg_waiting": "Pokud se disk nevrátí sám, připojte ho znovu. Kopírování pak pokračuje samo.",
         "msg_waiting_external": "Čeká jiný proces (např. v Terminálu); tato konzole ho nemůže zastavit.",
-        "msg_storage_escalation": "Disk se opakovaně odpojuje nebo se nevrátil. Další kopírování ho zatěžuje; "
+        "msg_storage_escalation": "Automatické obnovení se zastavilo. Další kopírování disk zatěžuje; "
                                   "zvažte image disku (ddrescue).",
         "storage_events_summary": "Odpojení disku: {losses} · automaticky obnoveno: {reconnects}",
         "msg_failed": "Příkaz {command} skončil chybou (kód {code}). Podrobnosti jsou v záznamu činnosti.",
@@ -320,8 +320,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "msg_pause_reason": "Reason: {reason}",
         "msg_waiting": "If the disk does not come back on its own, reconnect it; copying then continues by itself.",
         "msg_waiting_external": "Another process (e.g. in Terminal) is waiting; this console cannot stop it.",
-        "msg_storage_escalation": "The disk keeps disconnecting or did not come back. More copying stresses it; "
-                                  "consider imaging the disk (ddrescue).",
+        "msg_storage_escalation": "Automatic reconnect stopped. More copying stresses the disk; "
+                                  "consider imaging it (ddrescue).",
         "storage_events_summary": "Disk disconnections: {losses} · reconnected automatically: {reconnects}",
         "msg_failed": "Command {command} failed (exit {code}). See the activity log for details.",
         "msg_preflight_failed": "The operation was not started. The check results are on the Setup tab.",
