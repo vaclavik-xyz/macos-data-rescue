@@ -10,7 +10,8 @@ from typing import cast
 
 from .activity import activity_snapshot, activity_text
 from .errors import RescueError
-from .manifest import scan_issues, COPIED_STATUSES, UNREADABLE_COMPRESSED, all_files, is_same_or_inside, load_config, migrate_manifest, status_summary, volume_root_for_home
+from .storage_events import list_events
+from .manifest import connect, scan_issues, COPIED_STATUSES, UNREADABLE_COMPRESSED, all_files, is_same_or_inside, load_config, migrate_manifest, status_summary, volume_root_for_home
 
 
 STATUSES = ("pending", "copying", *COPIED_STATUSES, "failed", "timed_out", UNREADABLE_COMPRESSED, "skipped")
@@ -99,6 +100,7 @@ class CustomerReportText:
     recovered_data: str
     result_summary: str
     page: str
+    disconnect_note: str
 
 
 CUSTOMER_REPORT_TEXT = {
@@ -179,6 +181,8 @@ CUSTOMER_REPORT_TEXT = {
         recovered_data="Recovered data",
         result_summary="Result summary",
         page="Page",
+        disconnect_note=("Disk disconnections during the rescue: {n}. "
+                         "Copying resumed automatically after each reconnect."),
     ),
     "cs": CustomerReportText(
         title="Zpráva o záchraně dat",
@@ -258,6 +262,8 @@ CUSTOMER_REPORT_TEXT = {
         recovered_data="Zachráněná data",
         result_summary="Souhrn výsledku",
         page="Strana",
+        disconnect_note=("Počet odpojení disku během záchrany: {n}. "
+                         "Kopírování po každém opětovném připojení automaticky pokračovalo."),
     ),
 }
 PDF_CUSTOM_GLYPHS = (
@@ -300,7 +306,26 @@ PDF_CUSTOM_CHAR_CODES = {
 
 def status_text(job_dir: Path) -> str:
     summary = normalized_summary(job_dir)
-    return " ".join(f"{status}={summary[status]['count']}" for status in STATUSES) + activity_text(job_dir)
+    losses = storage_loss_count(job_dir)
+    return (" ".join(f"{status}={summary[status]['count']}" for status in STATUSES)
+            + (f" storage_losses={losses}" if losses else "") + activity_text(job_dir))
+
+
+def storage_events(job_dir: Path) -> list[dict]:
+    conn = connect(job_dir)
+    try:
+        return list_events(conn)
+    finally:
+        conn.close()
+
+
+def storage_loss_count(job_dir: Path) -> int:
+    return sum(1 for event in storage_events(job_dir) if event["kind"] == "lost")
+
+
+def disconnect_lines(job_dir: Path, text: CustomerReportText) -> list[str]:
+    count = storage_loss_count(job_dir)
+    return [text.disconnect_note.format(n=count)] if count else []
 
 
 def report(job_dir: Path, report_format: str) -> str:
@@ -363,6 +388,7 @@ def report_payload(job_dir: Path) -> dict[str, object]:
         "verification": verification_counts(rows),
         "activity": activity_snapshot(job_dir),
         "scan_issues": scan_issues(job_dir),
+        "storage_events": storage_events(job_dir),
         "warnings": list(WARNINGS),
         "files": [row_to_dict(row) for row in rows],
     }
@@ -389,6 +415,12 @@ def markdown_report(job_dir: Path) -> str:
         lines.extend(["", "## Unscanned paths (incomplete coverage)", ""])
         for issue in payload["scan_issues"]:
             lines.append(f"- `{issue['path']}` ({issue['phase']}): {issue['error']}")
+    events = cast(list[dict], payload["storage_events"])
+    if events:
+        lines.extend(["", "## Storage events", "", "| Time | Role | Kind | Detail |", "| --- | --- | --- | --- |"])
+        for event in events:
+            detail = json.dumps(event["detail"], ensure_ascii=False) if event["detail"] else ""
+            lines.append(f"| {event['at']} | {event['role'] or ''} | {event['kind']} | {markdown_table_cell(detail)} |")
     lines.extend(["", "## Destination integrity", "", str(payload["verification"]),
                   "SHA256 covers file content only; unverified files are not certified."])
     lines.extend(["", "## Important warnings", ""])
@@ -526,6 +558,7 @@ def customer_markdown_report(job_dir: Path, text: CustomerReportText | None = No
             f"- {text.metadata_note}",
             f"- {text.icloud_note}",
             f"- {text.practical_note}",
+            *(f"- {line}" for line in disconnect_lines(job_dir, text)),
             *([f"- {text.compressed_note}"] if compressed else []),
             *([f"- {text.fallback_note}"] if fallback else []),
             "",
@@ -607,6 +640,8 @@ def customer_pdf_bytes(job_dir: Path, text: CustomerReportText | None = None) ->
     canvas.bullet(text.metadata_note)
     canvas.bullet(text.icloud_note)
     canvas.bullet(text.practical_note)
+    for line in disconnect_lines(job_dir, text):
+        canvas.bullet(line)
     if compressed:
         canvas.bullet(text.compressed_note)
     if fallback:

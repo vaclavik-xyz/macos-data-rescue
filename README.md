@@ -28,6 +28,7 @@ The goal is simple: **one bad file must not stop the whole rescue**. The tool sc
 - `verify` checks destination SHA256 against digests captured during copying, without rereading source files.
 - `find-duplicates` suggests metadata-matched alternatives for failed files; every fallback remains an explicit operator choice.
 - Storage loss or a full destination pauses copying (exit 3); reconnect/free space and `resume`.
+- Opt-in `--auto-reconnect` waits out a storage loss, remounts the same volume (source read-only) and resumes within persisted limits; see [Automatic reconnect](#automatic-reconnect).
 - `preflight` runs the environment checks from the runbook (source readable and not `/`, job/dest outside the source, mount read-only state, write probes, free space vs remaining manifest bytes) and exits non-zero on failure.
 - `next` inspects the manifest and prints the exact next recommended command, so the operator — human or agent — never has to track the workflow state machine; approval-gated phases are listed separately and are never auto-suggested as required.
 - `approve` records the operator/customer decision for a gated phase (`app-data`, `applications`, `full-home`, legacy `library`) with a timestamp and optional `--by` name. `scan` refuses gated phases until approved — including the legacy default no-`--phase` scan, which reaches `~/Library` — and `copy`/`resume` refuse selections containing unapproved gated rows (covers manifests from older versions).
@@ -143,6 +144,22 @@ Restore jobs have a single scope: `scan` takes no `--phase` and records all rows
 | `0` | Command completed. `copy` / `resume` still return `0` when individual files are `failed` or `timed_out`; check status/report for per-file results. |
 | `1` | Job/runtime error such as an unsafe path, missing manifest, unreadable job config, or unexpected runtime failure. |
 | `2` | CLI usage error from argparse, such as missing required options or invalid argument values. |
+| `3` | `copy` / `resume` paused: storage unavailable, destination full, or `--auto-reconnect` gave up or was stopped while waiting. Run `next`. |
+| `130` | `copy` / `resume` interrupted (Ctrl-C / SIGTERM) during a copy pass; `resume` continues. |
+
+## Automatic reconnect
+
+Off by default. Overnight runs on a disk that keeps dropping off the bus can use:
+
+| Flag | Default | Meaning |
+|---|---:|---|
+| `--auto-reconnect` | off | Wait, cool down, remount the recorded volume (source `readOnly`, never `force`, destination never unmounted), verify the Volume UUID, resume. |
+| `--reconnect-cooldown SECONDS` | 300 | Leave the disk alone after a loss. |
+| `--reconnect-wait SECONDS` | 1800 | How long to wait for the volume after the cooldown. |
+| `--max-reconnects N` | 6 | Successful reconnects allowed since the last acknowledgement. |
+| `--acknowledge-storage-loss` | off | Re-enable the loop after a give-up (`next` recommends imaging first). |
+
+More than 3 disconnects within 60 minutes or two reconnects without new data also stop the loop. A drive that vanished from the bus needs a physical replug. Read [docs/agent-runbook.md](docs/agent-runbook.md) "Overnight runs and automatic reconnect" first.
 
 ## Phases
 

@@ -193,7 +193,8 @@ Exit codes describe whether the command itself ran:
 - `0`: command completed. `copy` and `resume` can still return `0` when individual files are `failed` or `timed_out`.
 - `1`: job/runtime error, unresolved scan paths, or failed/unverifiable destination integrity checks.
 - `2`: CLI usage error from argparse, such as invalid phase or missing required option.
-- `3`: copy paused because storage is unavailable or destination space/quota is exhausted. Reconnect the original disks or free space, then resume.
+- `3`: copy paused because storage is unavailable or destination space/quota is exhausted, or `--auto-reconnect` gave up or was stopped while waiting. Run `next`: it either asks you to reconnect/free space and resume, or (after an auto-reconnect give-up) recommends imaging or escalation.
+- `130`: copy was interrupted (Ctrl-C or SIGTERM) during an active copy pass; `resume` continues.
 
 Per-file statuses in `status` and reports are the real rescue outcome:
 
@@ -223,6 +224,55 @@ Extended attributes and resource forks are copied best-effort. The tool delibera
 
 The `applications` phase copies `.app` bundle files from the source volume `/Applications` and `~/Applications` into `Volume Applications/` and `Home Applications/` under `DST`. Do not promise that copied apps will launch on another Mac, keep licenses, preserve activation, or replace a proper reinstall.
 
+## Overnight runs and automatic reconnect
+
+Slow copies from a failing disk often run unattended. `copy`/`resume
+--auto-reconnect` keeps one invocation alive across short storage losses:
+
+1. A lost source or destination is recorded (`storage_events`) and the job
+   shows `state=waiting` in `status`/`status --watch` with the attempt number
+   and `wait_until`. A full destination (ENOSPC/EDQUOT) is never waited for.
+2. Cooldown (`--reconnect-cooldown`, default 300 s): nothing touches the disk.
+3. Wait (`--reconnect-wait`, default 1800 s), polling every 15 s. A volume that
+   is present but unmounted is mounted with `diskutil mount readOnly <UUID>`
+   (source) or `diskutil mount <UUID>` (destination). A source that macOS
+   auto-mounted writable, or at another mount point such as
+   `"/Volumes/Data 1"`, gets a plain `diskutil unmount` (never `force`) and a
+   read-only mount; if that fails or it lands elsewhere again, the run stops for
+   your decision. The destination is never unmounted. Recorded paths are never
+   rewritten. Network shares, volumes without a Volume UUID, and volumes not
+   mounted under `/Volumes` are only waited for.
+4. Copying resumes only when the recorded Volume UUID is mounted at the recorded
+   mount point and the recorded directory inodes match.
+
+The loop stops (exit 3, `gave-up` recorded) when any limit is hit: more than
+`--max-reconnects` (default 6) reconnects since the last acknowledgement, more
+than 3 disconnects within 60 minutes, two consecutive reconnects that copied no
+new data, the wait expiring (a mount that stays listed but does not answer is
+reported as a stale mount: reboot or replug), a different volume at the mount
+point, a mount point change, or a volume that needs unlocking. Limits are
+persisted in the manifest; restarting the command does not reset them. After a
+give-up, `--auto-reconnect` stays disabled until the technician passes
+`--acknowledge-storage-loss`; `next` recommends imaging (`ddrescue` with a
+mapfile) or lab escalation first. A disk that disconnects more than once while
+the same file is being read marks that file `failed` (still retryable later)
+so the queue moves on. Ctrl-C or SIGTERM while waiting records `stopped`,
+exits 3 and does not block a later auto-reconnect.
+
+What it cannot do: if the drive drops off the bus entirely (the USB-SATA bridge
+or drive firmware gave up), no software remount brings it back; only a physical
+replug or power cycle can. The loop then waits and stops with the escalation
+message. It helps when the device re-enumerates on its own or stays visible but
+unmounted. It never unlocks FileVault volumes, enters credentials, or power-cycles
+ports. Whether a read-only remount can make macOS run a filesystem check on the
+source has not been verified on hardware yet (see `docs/rescue-operations.md`).
+
+Before leaving a run overnight: cool the failing disk, keep the service Mac on
+power, prevent sleep (`caffeinate -dimsu` in another terminal or Energy Saver
+settings), keep the job directory on a reliable local disk, and check `next`
+and the `report` storage events in the morning. Customer reports mention the
+number of disconnects in one neutral line.
+
 ## Stop Or Escalate
 
 Stop normal file-level copying and escalate when:
@@ -234,6 +284,7 @@ Stop normal file-level copying and escalate when:
 - The source disappears, remounts unexpectedly, or paths change.
 - The OS logs or commands show broad hardware I/O errors.
 - The disk makes abnormal physical symptoms or repeatedly disconnects.
+- `--auto-reconnect` gave up (`next` prints `state: storage-escalation`).
 - The customer needs forensic preservation rather than practical file rescue.
 
 Escalation options include imaging first, `ddrescue`, hardware-level recovery, or stopping work to avoid worsening the device.
