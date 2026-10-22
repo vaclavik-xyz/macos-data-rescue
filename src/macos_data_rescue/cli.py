@@ -111,6 +111,12 @@ def build_parser() -> argparse.ArgumentParser:
     customer_report_parser.add_argument("--language", default="en", choices=CUSTOMER_REPORT_LANGUAGES)
     customer_report_parser.add_argument("--output", type=Path)
 
+    gui_parser = subparsers.add_parser("gui", help="Launch the graphical user interface.")
+    gui_parser.add_argument("--job-dir", type=Path, help="Open an existing job directory.")
+    gui_parser.add_argument("--source", type=Path, help="Pre-fill source directory.")
+    gui_parser.add_argument("--dest", type=Path, help="Pre-fill destination directory.")
+    gui_parser.add_argument("--lang", default="cs", choices=("cs", "en"), help="Interface language (cs or en).")
+
     return parser
 
 
@@ -190,6 +196,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "customer-report":
             output_path = write_customer_report(args.job_dir, args.format, args.output, args.language)
             print(f"wrote report={output_path}")
+        elif args.command == "gui":
+            from .gui import run_gui
+            return run_gui(job_dir=args.job_dir, source=args.source, dest=args.dest, lang=args.lang)
         else:
             parser.error(f"unknown command: {args.command}")
     except RescueError as exc:
