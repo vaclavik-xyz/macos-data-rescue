@@ -41,7 +41,7 @@ class StateInfo:
     # write to the job (or start another writer) must stay locked.
     busy: bool
     badge_key: str
-    color: str
+    color: str  # palette name (gui/palette.py), resolved for light/dark appearance
     # Optional banner explaining what the operator should do next.
     message_key: str | None = None
     # Offer the Resume action (copy paused by the CLI with exit code 3).
@@ -49,15 +49,15 @@ class StateInfo:
 
 
 STATE_INFO: dict[OpState, StateInfo] = {
-    OpState.IDLE: StateInfo(False, "state_idle", "#4b5563"),
-    OpState.RUNNING: StateInfo(True, "state_running", "#1d4ed8"),
-    OpState.WAITING: StateInfo(True, "state_waiting", "#c2410c", "msg_waiting"),
-    OpState.STOPPING: StateInfo(True, "state_stopping", "#b45309", "msg_stopping"),
-    OpState.STOPPED: StateInfo(False, "state_stopped", "#b45309", "msg_stopped"),
-    OpState.PAUSED_STORAGE: StateInfo(False, "state_paused_storage", "#b91c1c", "msg_paused_storage",
+    OpState.IDLE: StateInfo(False, "state_idle", "gray"),
+    OpState.RUNNING: StateInfo(True, "state_running", "blue"),
+    OpState.WAITING: StateInfo(True, "state_waiting", "orange", "msg_waiting"),
+    OpState.STOPPING: StateInfo(True, "state_stopping", "amber", "msg_stopping"),
+    OpState.STOPPED: StateInfo(False, "state_stopped", "amber", "msg_stopped"),
+    OpState.PAUSED_STORAGE: StateInfo(False, "state_paused_storage", "red", "msg_paused_storage",
                                       can_resume=True),
-    OpState.FAILED: StateInfo(False, "state_failed", "#b91c1c", "msg_failed"),
-    OpState.DONE: StateInfo(False, "state_done", "#15803d"),
+    OpState.FAILED: StateInfo(False, "state_failed", "red", "msg_failed"),
+    OpState.DONE: StateInfo(False, "state_done", "green"),
 }
 
 # States that only describe the last finished command; a persisted storage

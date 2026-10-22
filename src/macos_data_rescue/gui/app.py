@@ -27,6 +27,7 @@ from .commands import CommandSpec, GuideAction
 from .i18n import LANGUAGE_NAMES, PHASE_DESCRIPTIONS, format_eta, format_rate, format_waiting, phases_for_profile, tr
 from .monitor import BackgroundTasks, JobMonitor, JobSnapshot, SnapshotResult, TaskDone, telemetry_from
 from .runner import CommandRunner, OutputLine, RunFinished, RunnerBusy, RunnerNotice
+from .palette import is_dark_appearance, palette
 from .state import STOPPABLE, OpState, control_states, info, reconcile_with_activity, state_after_exit, wait_view
 
 LOG = logging.getLogger(__name__)
@@ -35,10 +36,11 @@ PUMP_MS = 100
 POLL_MS = 1000
 MAX_EVENTS_PER_PUMP = 300
 UNRESPONSIVE_AFTER_S = 5.0
-BADGES = (("badge_copied", "#15803d"), ("badge_fallback", "#0e7490"), ("badge_pending", "#1d4ed8"),
-          ("badge_timed_out", "#b45309"), ("badge_failed", "#b91c1c"), ("badge_compressed", "#7c3aed"),
-          ("badge_skipped", "#4b5563"))
-LEVEL_COLORS = {"ok": "#15803d", "warn": "#b45309", "fail": "#b91c1c"}
+# palette names (gui/palette.py), resolved for the current light/dark appearance
+BADGES = (("badge_copied", "green"), ("badge_fallback", "cyan"), ("badge_pending", "blue"),
+          ("badge_timed_out", "amber"), ("badge_failed", "red"), ("badge_compressed", "violet"),
+          ("badge_skipped", "gray"))
+LEVEL_COLORS = {"ok": "green", "warn": "amber", "fail": "red"}
 
 
 def set_enabled(widget: Any, enabled: bool, *, readonly: bool = False) -> None:
@@ -54,6 +56,7 @@ class DataRescueApp:
                  initial_dest: Path | None = None, lang: str = "cs", *,
                  runner_factory: Callable[[queue.Queue], CommandRunner] = CommandRunner) -> None:
         self.root = root
+        self.colors = palette(is_dark_appearance(root))
         self.lang = lang if lang in LANGUAGE_NAMES else "cs"
         self.events: queue.Queue = queue.Queue()
         self.runner = runner_factory(self.events)
@@ -142,7 +145,7 @@ class DataRescueApp:
         self.lang_combo.bind("<<ComboboxSelected>>", self._on_language_changed)
         self.state_badge = ttk.Label(right, font=("System", 12, "bold"), padding=(10, 4), relief="groove")
         self.state_badge.grid(row=0, column=2)
-        self.lbl_health = ttk.Label(right, foreground="#b91c1c", font=("System", 10))
+        self.lbl_health = ttk.Label(right, foreground=self.colors["red"], font=("System", 10))
         self.lbl_health.grid(row=1, column=0, columnspan=3, sticky="e")
 
         # state banner (paused storage / failure / stopping), visible on every tab
@@ -204,7 +207,7 @@ class DataRescueApp:
         self.lbl_excludes.pack(side="left", padx=(0, 8))
         self.excludes_entry = ttk.Entry(self.excludes_row, textvariable=self.excludes_var)
         self.excludes_entry.pack(side="left", fill="x", expand=True)
-        self.lbl_job_loaded = ttk.Label(self.paths_group, foreground="#1d4ed8", wraplength=820)
+        self.lbl_job_loaded = ttk.Label(self.paths_group, foreground=self.colors["blue"], wraplength=820)
 
         buttons = ttk.Frame(frame)
         buttons.grid(row=1, column=0, sticky="ew", pady=(0, 8))
@@ -227,7 +230,7 @@ class DataRescueApp:
         self.preflight_tree.column("check", width=170)
         self.preflight_tree.column("detail", width=560)
         for level, color in LEVEL_COLORS.items():
-            self.preflight_tree.tag_configure(level, foreground=color)
+            self.preflight_tree.tag_configure(level, foreground=self.colors[color])
         scroll = ttk.Scrollbar(self.results_group, orient="vertical", command=self.preflight_tree.yview)
         self.preflight_tree.configure(yscrollcommand=scroll.set)
         self.preflight_tree.grid(row=0, column=0, sticky="nsew")
@@ -257,7 +260,7 @@ class DataRescueApp:
                                         values=phases_for_profile(None), state="readonly", width=16)
         self.phase_combo.grid(row=0, column=1, sticky="w", padx=6)
         self.phase_combo.bind("<<ComboboxSelected>>", lambda _e: self._render_phase())
-        self.phase_desc_label = ttk.Label(self.control_group, font=("System", 10), foreground="#1d4ed8",
+        self.phase_desc_label = ttk.Label(self.control_group, font=("System", 10), foreground=self.colors["blue"],
                                           wraplength=520)
         self.phase_desc_label.grid(row=0, column=2, sticky="w", padx=6)
         self.btn_approve = ttk.Button(self.control_group, command=self.approve_phase_dialog)
@@ -319,15 +322,15 @@ class DataRescueApp:
         self.lbl_speed.grid(row=0, column=0, sticky="w", padx=(0, 16))
         self.lbl_eta = ttk.Label(metrics, font=("System", 11))
         self.lbl_eta.grid(row=0, column=1, sticky="w", padx=(0, 16))
-        self.lbl_current = ttk.Label(metrics, font=("System", 10), foreground="#444444")
+        self.lbl_current = ttk.Label(metrics, font=("System", 10), foreground=self.colors["muted"])
         self.lbl_current.grid(row=0, column=2, sticky="ew")
-        self.lbl_storage = ttk.Label(metrics, font=("System", 10, "bold"), foreground="#c2410c")
+        self.lbl_storage = ttk.Label(metrics, font=("System", 10, "bold"), foreground=self.colors["orange"])
         self.lbl_storage.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
         badges = ttk.Frame(self.dash_group)
         badges.grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
         self.badges: dict[str, ttk.Label] = {}
         for key, color in BADGES:
-            badge = ttk.Label(badges, font=("System", 10, "bold"), foreground=color, padding=(6, 2),
+            badge = ttk.Label(badges, font=("System", 10, "bold"), foreground=self.colors[color], padding=(6, 2),
                               relief="groove")
             badge.pack(side="left", padx=3)
             self.badges[key] = badge
@@ -589,10 +592,10 @@ class DataRescueApp:
 
     def _render_state(self) -> None:
         state_info = info(self.state)
-        self.state_badge.configure(text=self._t(state_info.badge_key), foreground=state_info.color)
+        self.state_badge.configure(text=self._t(state_info.badge_key), foreground=self.colors[state_info.color])
         message = self._banner_text()
         if message:
-            self.banner_label.configure(text=message, foreground=state_info.color)
+            self.banner_label.configure(text=message, foreground=self.colors[state_info.color])
             self.banner.grid()
         else:
             self.banner.grid_remove()
@@ -861,7 +864,7 @@ class DataRescueApp:
             self.preflight_summary_label.configure(text=self._t("preflight_none"), foreground="")
             return
         key, values = self._preflight_summary
-        color = {"preflight_fail": LEVEL_COLORS["fail"], "preflight_ok": LEVEL_COLORS["ok"]}.get(key, "")
+        color = {"preflight_fail": self.colors["red"], "preflight_ok": self.colors["green"]}.get(key, "")
         self.preflight_summary_label.configure(text=self._t(key, **values), foreground=color)
 
     def _log(self, text: str, tag: str = "stdout") -> None:
