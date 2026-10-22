@@ -520,9 +520,12 @@ def localize_decimal(text: str, lang: str = "cs") -> str:
 def format_percent(fraction: float, lang: str = "cs") -> str:
     """Whole percent, rounded down so an unfinished job never shows 100.
 
-    The epsilon keeps exact fractions whole: 0.57 * 100 is 56.99999999999999.
+    The epsilon keeps exact fractions whole (0.57 * 100 is 56.99999999999999);
+    the cap keeps a fraction just below 1 from reaching 100 through it.
     """
     value = max(0, min(100, int(fraction * 100 + 1e-9)))
+    if fraction < 1:
+        value = min(value, 99)
     return f"{value}\u00a0%" if lang == "cs" else f"{value}%"
 
 

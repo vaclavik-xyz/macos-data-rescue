@@ -421,6 +421,7 @@ def test_locale_formatters() -> None:
     assert localize_decimal("19.3 MiB", "cs") == "19,3 MiB" and localize_decimal("19.3 MiB", "en") == "19.3 MiB"
     assert format_percent(0.999, "cs") == "99\u00a0%" and format_percent(1.0, "en") == "100%"
     assert format_percent(57 / 100, "en") == "57%" and format_percent(29 / 100, "en") == "29%"
+    assert format_percent(1 - 1e-12, "en") == "99%"
     assert elide_middle("short", 10, len) == "short"
     assert elide_middle("abcdefghij", 5, len) == "ab…ij"
     assert elide_middle("abcdefghij", 1, len) == "…"
