@@ -3,6 +3,7 @@
 Commands run through the real CLI in a child process; sleep inhibition is
 replaced by a no-op so tests never start /usr/bin/caffeinate.
 """
+import gc
 import re
 import sqlite3
 import subprocess
@@ -96,6 +97,9 @@ def root():
         window.destroy()
     except tk.TclError:
         pass
+    # Collect the app's Tk variables now, on the Tk thread; a later cyclic GC
+    # pass on a worker thread would call into Tcl from the wrong thread.
+    gc.collect()
 
 
 @pytest.fixture
@@ -144,7 +148,7 @@ def test_guided_rescue_flow_through_real_cli(root, dialogs, tmp_path: Path, monk
     app.init_job()
     assert disabled(app.btn_init) and disabled(app.btn_open_job) and disabled(app.btn_preflight)
     pump(root, lambda: app.snapshot is not None)
-    assert app.job_dir == job_dir and app.state is OpState.DONE
+    assert app.job_dir == job_dir and app.state is OpState.IDLE
     levels = {app.preflight_tree.item(i, "tags")[0] for i in app.preflight_tree.get_children()}
     assert "ok" in levels and "fail" not in levels
     entry = app.path_widgets["source"][1]
@@ -246,6 +250,27 @@ def test_opening_paused_job_shows_storage_pause(root, dialogs, tmp_path: Path) -
     assert "Reason: source unavailable" in app.banner_label.cget("text")
     assert app.badges["badge_pending"].cget("text") == "Pending: 1"
     assert app.path_widgets["dest"][1].instate(["readonly"])
+
+
+def test_opening_another_job_resets_per_job_state(root, dialogs, tmp_path: Path) -> None:
+    source = tmp_path / "home"
+    write_file(source / "Desktop" / "a.txt", b"a")
+    job_a, _, _ = init_and_scan(tmp_path / "a", source)
+    job_b, _, _ = init_and_scan(tmp_path / "b", source)
+    app = make_app(root, initial_job_dir=job_a, lang="en")
+    pump(root, lambda: app.snapshot is not None)
+    copy = CommandSpec(("copy", "--job-dir", str(job_a), "--phase", "all", "--timeout", "30"))
+    app.last_copy_spec = copy
+    app.last_customer_report_path = tmp_path / "a" / "recovery-report.pdf"
+    app.state = OpState.RUNNING
+    app.events.put(RunFinished((copy,), 0, 3, False))
+    pump(root, lambda: app.state is OpState.PAUSED_STORAGE)
+    app._open_job(job_b)
+    pump(root, lambda: app.job_dir == job_b and app.snapshot is not None)
+    assert app.state is OpState.IDLE
+    assert app.banner.winfo_manager() == ""
+    assert app.last_copy_spec is None and app.last_customer_report_path is None
+    assert disabled(app.btn_open_report) and disabled(app.btn_resume)
 
 
 def test_invalid_numbers_are_rejected_before_running(root, dialogs, tmp_path: Path) -> None:

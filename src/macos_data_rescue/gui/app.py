@@ -633,22 +633,25 @@ class DataRescueApp:
     # ------------------------------------------------------------ job loading
 
     def _open_job(self, job_dir: Path, *, quiet: bool = False) -> None:
-        self.job_dir = None
-        self.snapshot = None
+        self._reset_job()
         self._loading = (job_dir, quiet)
         self.job_dir_var.set(str(job_dir))
         self.monitor.request(job_dir)
         self._apply_controls()
 
     def close_job(self) -> None:
-        if info(self.state).busy:
-            return
+        if not info(self.state).busy:
+            self._reset_job()
+
+    def _reset_job(self) -> None:
+        """Forget everything that belongs to the previously open job."""
         self.job_dir = None
         self.snapshot = None
         self._loading = None
         self.last_copy_spec = None
         self.last_customer_report_path = None
         self._last_finish = None
+        self._last_read_error = None
         self._clear_candidates()
         self._set_tech_report("")
         self.lbl_customer_report.configure(text="")
