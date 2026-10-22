@@ -359,3 +359,43 @@ def test_stop_is_graceful_and_keeps_controls_locked(root, dialogs, tmp_path: Pat
     finish(app, root, OpState.STOPPED)
     assert app._last_finish.returncode == 130
     assert not disabled(app.btn_copy)
+
+
+def test_waiting_for_disk_state_and_stop_waiting(root, dialogs, tmp_path: Path) -> None:
+    from test_auto_reconnect import seed_identities
+
+    for name in ("a", "b"):
+        write_file(tmp_path / "source-home" / name, b"hello")
+    job_dir, source, _ = init_and_scan(tmp_path)
+    seed_identities(job_dir, source_uuid=None, dest_uuid=None)
+    app = make_app(root, initial_job_dir=job_dir, lang="cs")
+    pump(root, lambda: app.snapshot is not None)
+    app.reconnect_cooldown_var.set("60")
+    ok, reconnect = app._reconnect_options()
+    assert ok and reconnect.args() == ("--auto-reconnect", "--reconnect-cooldown", "60")
+    # the disk drops before the copy reaches it; preflight would stop a real start here
+    source.rename(source.with_name("unplugged"))
+    app._start([cmd_copy(job_dir, reconnect)])
+    pump(root, lambda: app.state is OpState.WAITING)
+    assert app.state_badge.cget("text") == "ČEKÁ NA DISK"
+    banner = app.banner_label.cget("text")
+    assert "Chladnutí disku: zbývá" in banner and "(pokus 1)" in banner
+    assert app.btn_stop.cget("text") == "Zastavit čekání" and not disabled(app.btn_stop)
+    assert disabled(app.btn_copy) and disabled(app.btn_guide) and disabled(app.chk_auto_reconnect)
+    assert app.lbl_storage.cget("text") == "Odpojení disku: 1 · automaticky obnoveno: 0"
+
+    app.stop_current_operation()
+    assert app.state is OpState.STOPPING
+    finish(app, root, OpState.PAUSED_STORAGE)
+    assert app._last_finish.returncode == 3 and app._last_finish.stop_requested
+    assert "znovu připojte původní disk" in app.banner_label.cget("text"), "a plain stop is no escalation"
+    assert [c[0] for c in dialogs] == ["askyesno"], "only the stop confirmation, no acknowledgement"
+    assert "Zastavit čekání na disk?" in dialogs[0][1][1]
+    pump(root, lambda: app.snapshot is not None and app.snapshot.activity.get("state") == "paused")
+    assert app.state is OpState.PAUSED_STORAGE and not app.snapshot.storage_blocked
+
+
+def cmd_copy(job_dir: Path, reconnect):
+    from macos_data_rescue.gui.commands import copy_spec
+
+    return copy_spec(job_dir, "all", 30.0, reconnect=reconnect)

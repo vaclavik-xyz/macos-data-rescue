@@ -14,6 +14,7 @@ import subprocess  # nosec B404
 import threading
 import tkinter as tk
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
@@ -23,10 +24,10 @@ from ..manifest import GATED_PHASES
 from ..reporting import format_size, report
 from . import commands as cmd
 from .commands import CommandSpec, GuideAction
-from .i18n import LANGUAGE_NAMES, PHASE_DESCRIPTIONS, format_eta, format_rate, phases_for_profile, tr
+from .i18n import LANGUAGE_NAMES, PHASE_DESCRIPTIONS, format_eta, format_rate, format_waiting, phases_for_profile, tr
 from .monitor import BackgroundTasks, JobMonitor, JobSnapshot, SnapshotResult, TaskDone, telemetry_from
 from .runner import CommandRunner, OutputLine, RunFinished, RunnerBusy, RunnerNotice
-from .state import OpState, control_states, info, reconcile_with_activity, state_after_exit
+from .state import STOPPABLE, OpState, control_states, info, reconcile_with_activity, state_after_exit, wait_view
 
 LOG = logging.getLogger(__name__)
 
@@ -66,6 +67,10 @@ class DataRescueApp:
         self._loading: tuple[Path, bool] | None = None  # (job dir, report errors in a dialog)
         self._last_read_error: str | None = None
         self._last_finish: RunFinished | None = None
+        self._finished_at: float | None = None  # monitor clock when the last command finished
+        # True from a successful start until its RunFinished is handled (the
+        # runner itself turns idle slightly earlier, as soon as the child is reaped)
+        self._own_run = False
         self._on_success: Callable[[], None] | None = None
         self._close_requested = False
         self._destroyed = False
@@ -316,6 +321,8 @@ class DataRescueApp:
         self.lbl_eta.grid(row=0, column=1, sticky="w", padx=(0, 16))
         self.lbl_current = ttk.Label(metrics, font=("System", 10), foreground="#444444")
         self.lbl_current.grid(row=0, column=2, sticky="ew")
+        self.lbl_storage = ttk.Label(metrics, font=("System", 10, "bold"), foreground="#c2410c")
+        self.lbl_storage.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
         badges = ttk.Frame(self.dash_group)
         badges.grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
         self.badges: dict[str, ttk.Label] = {}
@@ -567,6 +574,8 @@ class DataRescueApp:
         if unresponsive != self._unresponsive_s:
             self._unresponsive_s = unresponsive
             self._render_health()
+        if self.state is OpState.WAITING:
+            self._render_state()  # live countdown, even while a manifest read hangs
         self.root.after(POLL_MS, self._poll)
 
     def _submit(self, function: Callable[[], Any], callback: Callable[[TaskDone], None]) -> None:
@@ -591,6 +600,7 @@ class DataRescueApp:
             self.btn_resume.grid()
         else:
             self.btn_resume.grid_remove()
+        self.btn_stop.configure(text=self._t("btn_stop_waiting" if self.state is OpState.WAITING else "btn_stop"))
         self._apply_controls()
 
     def _banner_text(self) -> str:
@@ -605,6 +615,12 @@ class DataRescueApp:
             command = spec.subcommand if spec is not None else "?"
             code = finish.returncode if finish.returncode is not None else finish.error
             return self._t("msg_failed", command=command, code=code)
+        if self.state is OpState.WAITING:
+            activity = (self.snapshot.activity if self.snapshot is not None else None) or {}
+            return format_waiting(wait_view(activity, datetime.now(timezone.utc)), self.lang,
+                                  stoppable=self._own_run)
+        if self.state is OpState.PAUSED_STORAGE and self._escalation_pending():
+            key = "msg_storage_escalation"
         text = self._t(key)
         if self.state is OpState.PAUSED_STORAGE and self.snapshot is not None:
             reason = telemetry_from(self.snapshot).pause_reason
@@ -617,7 +633,7 @@ class DataRescueApp:
         self.lbl_health.configure(text=text)
 
     def _apply_controls(self) -> None:
-        c = control_states(self.state, job_loaded=self.job_dir is not None)
+        c = self._controls()
         loading = self._loading is not None
         fields = c["job_fields"] and not loading
         for name, (_label, entry, button, _hint) in self.path_widgets.items():
@@ -655,6 +671,9 @@ class DataRescueApp:
         else:
             self.lbl_job_loaded.grid_remove()
 
+    def _controls(self) -> dict[str, bool]:
+        return control_states(self.state, job_loaded=self.job_dir is not None, own_child=self._own_run)
+
     # ------------------------------------------------------------ job loading
 
     def _open_job(self, job_dir: Path, *, quiet: bool = False) -> None:
@@ -665,7 +684,7 @@ class DataRescueApp:
         self._apply_controls()
 
     def close_job(self) -> None:
-        if not info(self.state).busy:
+        if self._controls()["close_job"]:
             self._reset_job()
 
     def _reset_job(self) -> None:
@@ -706,9 +725,13 @@ class DataRescueApp:
             return
         self._last_read_error = None
         self.snapshot = result.snapshot
-        new_state = reconcile_with_activity(self.state, (result.snapshot.activity or {}).get("state"))
-        if new_state is not self.state:
-            self._set_state(new_state)
+        # a read that started before the last command finished must not undo its final state
+        stale = self._finished_at is not None and result.requested_at < self._finished_at
+        if not stale:
+            new_state = reconcile_with_activity(self.state, (result.snapshot.activity or {}).get("state"),
+                                                child_running=self._own_run)
+            if new_state is not self.state:
+                self._set_state(new_state)
         self._render_snapshot()
 
     def _apply_job_fields(self, snapshot: JobSnapshot) -> None:
@@ -730,7 +753,7 @@ class DataRescueApp:
         self._render_guide()
         self._render_failed_rows()
         self._render_phase()
-        if self.state is OpState.PAUSED_STORAGE:
+        if self.state in (OpState.PAUSED_STORAGE, OpState.WAITING):
             self._render_state()
 
     def _render_telemetry(self) -> None:
@@ -745,6 +768,7 @@ class DataRescueApp:
             self.lbl_speed.configure(text=t("speed", rate=format_rate(0)))
             self.lbl_eta.configure(text=t("eta", eta=t("eta_unknown")))
             self.lbl_current.configure(text=t("current_file", file="—"))
+            self.lbl_storage.configure(text="")
             return
         view = telemetry_from(self.snapshot)
         for key, badge in self.badges.items():
@@ -764,6 +788,8 @@ class DataRescueApp:
         self.lbl_eta.configure(text=t("eta", eta=format_eta(view.eta_seconds, self.lang)))
         current = f"{view.current_path} ({format_size(view.current_bytes)})" if view.current_path else "—"
         self.lbl_current.configure(text=t("current_file", file=current))
+        self.lbl_storage.configure(text=t("storage_events_summary", losses=view.storage_losses,
+                                          reconnects=view.reconnects) if view.storage_losses else "")
 
     def _guide_action(self) -> GuideAction:
         if self.snapshot is None or self.job_dir is None:
@@ -869,6 +895,7 @@ class DataRescueApp:
             self.last_copy_spec = copies[-1]
         self._on_success = on_success
         self._last_finish = None
+        self._own_run = True
         self._set_state(OpState.RUNNING)
         return True
 
@@ -898,6 +925,8 @@ class DataRescueApp:
         state = state_after_exit(event.returncode, stop_requested=event.stop_requested, error=bool(event.error))
         if event.error:
             self._log(self._t("log_runner_error", error=event.error) + "\n", "error")
+        elif state is OpState.PAUSED_STORAGE and event.stop_requested:
+            self._log(self._t("log_stopped_waiting") + "\n", "warn")
         elif state is OpState.PAUSED_STORAGE:
             self._log(self._t("log_paused_storage") + "\n", "warn")
         elif state is OpState.STOPPED:
@@ -913,6 +942,8 @@ class DataRescueApp:
             self.notebook.select(self.tab_setup)
         on_success, self._on_success = self._on_success, None
         self._last_finish = event
+        self._finished_at = self.monitor.now()
+        self._own_run = False
         self._set_state(state)
         if event.completed_all and on_success is not None:
             on_success()
@@ -922,14 +953,16 @@ class DataRescueApp:
             self._destroy()
 
     def stop_current_operation(self) -> None:
-        if self.state is not OpState.RUNNING:
+        """Stop (or "Stop waiting"): the same graceful SIGINT to the child's process group."""
+        if self.state not in STOPPABLE or not self._own_run:
             return
-        if messagebox.askyesno(self._t("confirm_stop_title"), self._t("confirm_stop_msg")):
+        message = "confirm_stop_waiting_msg" if self.state is OpState.WAITING else "confirm_stop_msg"
+        if messagebox.askyesno(self._t("confirm_stop_title"), self._t(message)):
             if self.runner.request_stop():
                 self._set_state(OpState.STOPPING)
 
     def _on_close(self) -> None:
-        if self.state is OpState.RUNNING:
+        if self.state in STOPPABLE and self._own_run:
             if not messagebox.askyesno(self._t("confirm_close_title"), self._t("confirm_close_msg")):
                 return
             self._close_requested = True

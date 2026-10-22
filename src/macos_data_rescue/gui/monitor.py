@@ -54,6 +54,9 @@ class SnapshotResult:
     job_dir: Path
     snapshot: JobSnapshot | None
     error: str | None = None
+    # monitor clock when the read started: a read that began before a command
+    # finished may describe the job as it was while the command still ran
+    requested_at: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -110,20 +113,23 @@ class JobMonitor:
         with self._lock:
             if self._started is not None:
                 return False
-            self._started = self._clock()
-        threading.Thread(target=self._read, args=(job_dir,), name="job-monitor", daemon=True).start()
+            started = self._started = self._clock()
+        threading.Thread(target=self._read, args=(job_dir, started), name="job-monitor", daemon=True).start()
         return True
+
+    def now(self) -> float:
+        return self._clock()
 
     def stalled_for(self) -> float:
         """Seconds the in-flight read has been running (0 when idle)."""
         with self._lock:
             return 0.0 if self._started is None else self._clock() - self._started
 
-    def _read(self, job_dir: Path) -> None:
+    def _read(self, job_dir: Path, started: float) -> None:
         try:
-            result = SnapshotResult(job_dir, self._reader(job_dir))
+            result = SnapshotResult(job_dir, self._reader(job_dir), requested_at=started)
         except Exception as exc:
-            result = SnapshotResult(job_dir, None, f"{type(exc).__name__}: {exc}")
+            result = SnapshotResult(job_dir, None, f"{type(exc).__name__}: {exc}", requested_at=started)
         finally:
             with self._lock:
                 self._started = None
@@ -164,6 +170,8 @@ class Telemetry:
     transferred_bytes: int = 0
     remaining_bytes: int = 0
     pause_reason: str | None = None
+    storage_losses: int = 0
+    reconnects: int = 0
 
     @property
     def bytes_fraction(self) -> float | None:
@@ -199,4 +207,6 @@ def telemetry_from(snapshot: JobSnapshot) -> Telemetry:
         transferred_bytes=int(activity.get("transferred_bytes") or 0),
         remaining_bytes=int(activity.get("remaining_bytes") or 0),
         pause_reason=activity.get("reason") if activity.get("state") == "paused" else None,
+        storage_losses=snapshot.storage_losses,
+        reconnects=snapshot.reconnects,
     )

@@ -4,6 +4,7 @@ import signal
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,7 @@ from macos_data_rescue.gui.commands import (
 )
 from macos_data_rescue.manifest import connect
 from macos_data_rescue.storage_events import record_event
+from macos_data_rescue.gui.i18n import format_waiting
 from macos_data_rescue.gui.monitor import JobMonitor, JobSnapshot, read_job_snapshot, telemetry_from
 from macos_data_rescue.gui.runner import CommandRunner, KeepAwake, OutputLine, RunFinished, RunnerNotice
 from macos_data_rescue.gui.state import (
@@ -40,6 +42,7 @@ from macos_data_rescue.gui.state import (
     info,
     reconcile_with_activity,
     state_after_exit,
+    wait_view,
 )
 
 
@@ -257,6 +260,9 @@ def test_output_parsers() -> None:
         (3, False, False, OpState.PAUSED_STORAGE),
         (3, True, False, OpState.PAUSED_STORAGE),
         (-2, True, False, OpState.STOPPED),
+        # the CLI exits 130 on SIGINT/SIGTERM during a copy pass: stopped only if the operator asked
+        (130, True, False, OpState.STOPPED),
+        (130, False, False, OpState.FAILED),
         (None, True, False, OpState.STOPPED),
         (None, False, True, OpState.FAILED),
         (0, False, True, OpState.FAILED),
@@ -280,13 +286,53 @@ def test_reconcile_with_persisted_activity() -> None:
     assert reconcile_with_activity(OpState.PAUSED_STORAGE, None) is OpState.PAUSED_STORAGE
 
 
-@pytest.mark.parametrize("state", [OpState.RUNNING, OpState.STOPPING])
+@pytest.mark.parametrize("state", [OpState.RUNNING, OpState.WAITING, OpState.STOPPING])
 def test_busy_states_lock_every_job_mutation(state: OpState) -> None:
     controls = control_states(state, job_loaded=True)
     for name in ("job_fields", "init", "open_job", "close_job", "preflight", "phase", "approve", "scan",
                  "copy", "verify", "guide", "resume", "recover", "customer_report", "options"):
         assert controls[name] is False, name
-    assert controls["stop"] is (state is OpState.RUNNING)
+    assert controls["stop"] is (state is not OpState.STOPPING)
+
+
+def test_waiting_of_another_process_locks_the_job_but_cannot_be_stopped() -> None:
+    controls = control_states(OpState.WAITING, job_loaded=True, own_child=False)
+    assert controls["stop"] is False
+    assert controls["open_job"] and controls["close_job"]
+    assert not (controls["copy"] or controls["resume"] or controls["scan"] or controls["guide"])
+
+
+def test_waiting_activity_is_never_shown_as_running_or_idle() -> None:
+    # the console's own child
+    assert reconcile_with_activity(OpState.RUNNING, "waiting", child_running=True) is OpState.WAITING
+    assert reconcile_with_activity(OpState.WAITING, "running", child_running=True) is OpState.RUNNING
+    assert reconcile_with_activity(OpState.WAITING, "waiting", child_running=True) is OpState.WAITING
+    assert reconcile_with_activity(OpState.STOPPING, "waiting", child_running=True) is OpState.STOPPING
+    # the exit code decides the final state of an own child, not the activity
+    assert reconcile_with_activity(OpState.WAITING, "paused", child_running=True) is OpState.RUNNING
+    # a writer outside the console (terminal session)
+    for settled in (OpState.IDLE, OpState.DONE, OpState.FAILED, OpState.STOPPED, OpState.PAUSED_STORAGE):
+        assert reconcile_with_activity(settled, "waiting") is OpState.WAITING
+    assert reconcile_with_activity(OpState.WAITING, "paused") is OpState.PAUSED_STORAGE
+    assert reconcile_with_activity(OpState.WAITING, "finished") is OpState.IDLE
+    assert reconcile_with_activity(OpState.WAITING, "interrupted") is OpState.IDLE
+
+
+def test_waiting_banner_cooldown_and_wait_phases() -> None:
+    now = datetime(2026, 10, 22, 1, 0, 55, tzinfo=timezone.utc)
+    cooldown = wait_view({"state": "waiting", "wait_phase": "cooldown", "wait_until": "2026-10-22T01:05:00+00:00",
+                          "attempt": 2, "reason": "source unavailable"}, now)
+    assert (cooldown.phase, cooldown.remaining, cooldown.attempt) == ("cooldown", 245, 2)
+    text = format_waiting(cooldown, "cs")
+    assert "Chladnutí disku: zbývá 4m 05s (pokus 2)" in text
+    assert "Důvod: source unavailable" in text and "Zastavit čekání" in text
+    waiting = wait_view({"wait_phase": "waiting", "wait_until": "2026-10-22T01:30:55+00:00", "attempt": 1}, now)
+    english = format_waiting(waiting, "en", stoppable=False)
+    assert "at most 30m 00s more (attempt 1)" in english
+    assert "this console cannot stop it" in english and "Reason" not in english
+    assert wait_view({"wait_phase": "waiting", "wait_until": "2026-10-22T01:00:00+00:00"}, now).remaining == 0
+    unknown = wait_view({"wait_phase": "waiting", "wait_until": "garbage"}, now)
+    assert unknown.remaining is None and "nejdéle ještě — (pokus ?)" in format_waiting(unknown, "cs")
 
 
 def test_loaded_job_fields_are_read_only_when_idle() -> None:
@@ -553,6 +599,11 @@ def test_telemetry_running_and_paused() -> None:
                                            "path": "a"}, {}))
     assert paused.pause_reason == "source unavailable"
     assert paused.rate_bytes_s == 0 and paused.current_path is None
+    assert paused.storage_losses == 0
+    waiting = JobSnapshot(JOB, Path("/s"), Path("/d"), "customer-home", (), {}, {"state": "waiting", "rate_bytes_s": 9},
+                          "", {}, (), storage_losses=3, reconnects=2)
+    view = telemetry_from(waiting)
+    assert (view.storage_losses, view.reconnects, view.rate_bytes_s, view.eta_seconds) == (3, 2, 0, None)
 
 
 def test_monitor_coalesces_hung_reads() -> None:
@@ -572,5 +623,72 @@ def test_monitor_coalesces_hung_reads() -> None:
     release.set()
     result = events.get(timeout=5)
     assert result.snapshot is None and "disk gone" in result.error
+    assert result.requested_at == 100.0, "results say when their read started (stale-read guard)"
     assert monitor.stalled_for() == 0
     assert monitor.request(JOB) is True
+
+
+# -- auto-reconnect through the real CLI ---------------------------------------
+
+def waiting_copy(tmp_path: Path, cooldown: str) -> tuple[Path, Path, CommandSpec]:
+    """A job whose source is gone; network-style identities, so diskutil is never needed."""
+    from test_auto_reconnect import seed_identities
+
+    for name in ("a", "b"):
+        write_file(tmp_path / "source-home" / name, b"hello")
+    job_dir, source, _ = init_and_scan(tmp_path)
+    seed_identities(job_dir, source_uuid=None, dest_uuid=None)
+    source.rename(source.with_name("unplugged"))
+    spec = copy_spec(job_dir, "all", 30.0, reconnect=ReconnectOptions(cooldown=float(cooldown)))
+    return job_dir, source, spec
+
+
+def wait_for_activity(job_dir: Path, runner: CommandRunner, state: str, timeout: float = 20.0) -> JobSnapshot:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        assert runner.busy, "the copy ended before reaching the expected activity"
+        snapshot = read_job_snapshot(job_dir)
+        if snapshot.activity.get("state") == state:
+            return snapshot
+        time.sleep(0.05)
+    raise AssertionError(f"activity never became {state}")
+
+
+def finished_event(events: queue.Queue, runner: CommandRunner) -> RunFinished:
+    runner.join(30)
+    assert not runner.busy
+    return [item for item in drain(events) if isinstance(item, RunFinished)][-1]
+
+
+def test_stop_while_waiting_is_a_storage_pause_without_acknowledgement(tmp_path: Path) -> None:
+    job_dir, _, spec = waiting_copy(tmp_path, cooldown="60")
+    events: queue.Queue = queue.Queue()
+    runner = CommandRunner(events)
+    runner.start([spec])
+    snapshot = wait_for_activity(job_dir, runner, "waiting")
+    assert reconcile_with_activity(OpState.RUNNING, "waiting", child_running=runner.busy) is OpState.WAITING
+    assert snapshot.activity["wait_phase"] == "cooldown" and snapshot.activity["attempt"] == 1
+    assert snapshot.storage_losses == 1 and not snapshot.storage_blocked
+    assert runner.request_stop()  # the console's Stop: SIGINT to the process group
+    finished = finished_event(events, runner)
+    assert finished.returncode == 3 and finished.stop_requested
+    assert state_after_exit(finished.returncode, stop_requested=True) is OpState.PAUSED_STORAGE
+    after = read_job_snapshot(job_dir)
+    assert after.activity["state"] == "paused" and not after.storage_blocked
+    resume = with_reconnect(resume_from(spec), ReconnectOptions())
+    assert not needs_storage_acknowledgement(resume, blocked=after.storage_blocked)
+
+
+def test_disk_back_during_cooldown_resumes_and_finishes(tmp_path: Path) -> None:
+    job_dir, source, spec = waiting_copy(tmp_path, cooldown="1")
+    events: queue.Queue = queue.Queue()
+    runner = CommandRunner(events)
+    runner.start([spec])
+    wait_for_activity(job_dir, runner, "waiting")
+    source.with_name("unplugged").rename(source)
+    finished = finished_event(events, runner)
+    assert finished.returncode == 0 and finished.completed_all
+    after = read_job_snapshot(job_dir)
+    assert after.activity["state"] == "finished"
+    assert (after.storage_losses, after.reconnects) == (1, 1)
+    assert after.counts.get("copied") == 2

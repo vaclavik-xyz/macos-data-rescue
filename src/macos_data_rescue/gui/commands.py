@@ -151,7 +151,7 @@ def init_spec(job_dir: Path, source: Path, dest: Path, profile: str, excludes: t
 def scan_spec(job_dir: Path, phase: str, budget: float | None, limit: int | None) -> CommandSpec:
     args = ["scan", "--job-dir", str(job_dir), "--phase", phase]
     if budget is not None:
-        args += ["--timeout", _number(budget)]
+        args += ["--timeout", number_text(budget)]
     if limit is not None:
         args += ["--limit", str(limit)]
     return CommandSpec(tuple(args))
@@ -168,9 +168,9 @@ class ReconnectOptions:
     def args(self) -> tuple[str, ...]:
         args = [RECONNECT_FLAG]
         if self.cooldown != DEFAULT_COOLDOWN:
-            args += [COOLDOWN_OPTION, _number(self.cooldown)]
+            args += [COOLDOWN_OPTION, number_text(self.cooldown)]
         if self.wait != DEFAULT_WAIT:
-            args += [WAIT_OPTION, _number(self.wait)]
+            args += [WAIT_OPTION, number_text(self.wait)]
         if self.max_reconnects != DEFAULT_MAX_RECONNECTS:
             args += [MAX_RECONNECTS_OPTION, str(self.max_reconnects)]
         return tuple(args)
@@ -179,7 +179,7 @@ class ReconnectOptions:
 def copy_spec(job_dir: Path, phase: str, timeout: float, limit: int | None = None, *,
               path: str | None = None, fallback_from: str | None = None, command: str = "copy",
               reconnect: ReconnectOptions | None = None) -> CommandSpec:
-    args = [command, "--job-dir", str(job_dir), "--phase", phase, "--timeout", _number(timeout)]
+    args = [command, "--job-dir", str(job_dir), "--phase", phase, "--timeout", number_text(timeout)]
     if limit is not None:
         args += ["--limit", str(limit)]
     if path is not None and fallback_from is not None:
@@ -256,7 +256,7 @@ def resume_from(spec: CommandSpec) -> CommandSpec:
 
 
 def verify_spec(job_dir: Path, phase: str, timeout: float) -> CommandSpec:
-    return CommandSpec(("verify", "--job-dir", str(job_dir), "--phase", phase, "--timeout", _number(timeout)))
+    return CommandSpec(("verify", "--job-dir", str(job_dir), "--phase", phase, "--timeout", number_text(timeout)))
 
 
 def approve_spec(job_dir: Path, phase: str, by: str) -> CommandSpec:
@@ -308,8 +308,6 @@ def number_text(value: float) -> str:
     """Format a number the way the GUI passes it to the CLI (``300``, ``1.5``)."""
     return str(int(value)) if float(value).is_integer() else repr(float(value))
 
-
-_number = number_text
 
 
 def parse_preflight_line(line: str) -> tuple[str, str, str] | None:
