@@ -33,7 +33,7 @@ The goal is simple: **one bad file must not stop the whole rescue**. The tool sc
 - `approve` records the operator/customer decision for a gated phase (`app-data`, `applications`, `full-home`, legacy `library`) with a timestamp and optional `--by` name. `scan` refuses gated phases until approved — including the legacy default no-`--phase` scan, which reaches `~/Library` — and `copy`/`resume` refuse selections containing unapproved gated rows (covers manifests from older versions).
 - `report` prints Markdown or JSON suitable for service notes, including per-file suspected iCloud placeholder warnings.
 - `customer-report` writes an English or Czech customer-facing Markdown/PDF handoff report into the visible recovery root.
-- `gui` launches a native macOS technician GUI (`macos-data-rescue-gui`) with zero external runtime dependencies, providing real-time telemetry, visual preflight checks, gated approvals, and customer report generation.
+- `gui` (or `macos-data-rescue-gui`) opens a Tk technician console (standard library only, Czech default / English) that drives the same CLI commands with live progress, preflight results, consent dialogs and reports.
 
 ## Install
 
@@ -55,61 +55,38 @@ macos-data-rescue-gui --help
 
 The application has no runtime dependencies (Python standard library only). Development and security-check tools are isolated in the dev dependency group.
 
-## How to run the software
+## Technician console (GUI)
 
-### Clean / Factory-Reset Mac (One-Click Setup)
-
-On a freshly installed Mac after a factory reset, **you do not need to install anything manually** (no Xcode Command Line Tools, no Homebrew, no admin/sudo passwords).
-
-1. Clone or copy the repository folder to the Mac (e.g. from a USB drive).
-2. Run the automated setup script or double-click the launcher:
-   ```bash
-   ./setup-fresh-mac.sh
-   ```
-   *Or simply double-click [macos-data-rescue.command](macos-data-rescue.command) in macOS Finder.*
-3. **Important (macOS Permission):** Grant Terminal **Full Disk Access** (Plný přístup k disku) in:  
-   *System Settings → Privacy & Security → Full Disk Access* (Nastavení systému → Soukromí a zabezpečení → Plný přístup k disku) so macOS allows reading customer home directories on the mounted disk.
-
-The script automatically downloads the lightweight portable runtime, sets up the environment in seconds, and opens the GUI.
-
-### 1. Graphical User Interface (GUI Console) — Recommended for Service Technicians
-
-The GUI provides an interactive macOS dashboard with Finder folder pickers, preflight safety health checks, phased rescue workflows, sleep inhibition (`caffeinate`), live transfer speed / ETA telemetry, and one-click customer handoff reports in English or Czech.
-
-The interface is fully localized in **Czech (Čeština, default)** and **English**, switchable directly in the top header or via `--lang cs` / `--lang en`.
-
-- **Option A — Double-click in macOS Finder:**  
-  Double-click [macos-data-rescue.command](macos-data-rescue.command) directly in the project folder.
-- **Option B — Using uv:**  
-  ```bash
-  uv run macos-data-rescue gui
-  # or directly:
-  uv run macos-data-rescue-gui
-  ```
-- **Option C — Open directly into an existing job:**  
-  ```bash
-  uv run macos-data-rescue gui --job-dir "/Volumes/RecoverySSD/Customer/.rescue"
-  ```
-- **Option D — Using system Python 3 (without uv):**  
-  ```bash
-  python3 -m macos_data_rescue.gui
-  ```
-
-### 2. Command-Line Interface (CLI)
-
-For scripted, automated, or headless workflows:
+On a freshly installed Mac, copy the repository folder to the Mac (for example from a USB drive; `git clone` itself needs the Xcode Command Line Tools) and run:
 
 ```bash
-# Display general help and subcommands:
+./setup-fresh-mac.sh            # or double-click macos-data-rescue.command in Finder
+```
+
+The script installs a pinned `uv` release into `~/.local/bin` if needed (no sudo, Homebrew or Xcode), runs `uv sync --locked --no-dev` with a uv-managed Python 3.11+ that includes Tk, and opens the console. Grant the Terminal app **Full Disk Access** (System Settings → Privacy & Security → Full Disk Access) so the mounted customer home is readable.
+
+From an existing checkout:
+
+```bash
+uv run macos-data-rescue gui --lang cs          # or: uv run macos-data-rescue-gui
+uv run macos-data-rescue gui --job-dir "/Volumes/RecoverySSD/Customer/.rescue"
+```
+
+The console is a front end for the CLI, so every rule in this README and in [docs/agent-runbook.md](docs/agent-runbook.md) applies; read the runbook before working on real customer data. In addition:
+
+- `preflight` runs before `init` and again before every `scan`, `copy` and `resume`; a failed check stops the operation and is shown on the Setup tab.
+- An opened job shows its source, destination and profile read-only. While an operation runs, everything that could write to the job (init, preflight, consent, phase changes, another scan/copy) is locked.
+- The recommended-step button runs only `scan`, `copy`, `resume`, `verify`, `status`, `report` and `customer-report`. When `next` asks for consent, it opens the consent dialog instead, which requires the approving person's name and an explicit confirmation; consent is never recorded automatically.
+- **Stop** interrupts the running command (SIGINT, then SIGTERM/SIGKILL if it does not exit). Committed progress stays in the manifest; continue with the recommended step. The console stays locked until the process has really exited.
+- Exit code 3 shows *storage unavailable*: reconnect the original disk (or free destination space), then press **Resume**, which reruns the paused copy with the same options after a fresh preflight.
+- "Keep the Mac awake" runs `caffeinate -dims -w <pid>` bound to the running command only.
+
+## CLI quick start
+
+```bash
 uv run macos-data-rescue --help
-
-# Run preflight safety check:
 uv run macos-data-rescue preflight --job-dir "$JOB" --source "$SRC" --dest "$DST"
-
-# Initialize a job:
 uv run macos-data-rescue init --job-dir "$JOB" --source "$SRC" --dest "$DST"
-
-# Check next recommended step:
 uv run macos-data-rescue next --job-dir "$JOB"
 ```
 
@@ -221,13 +198,13 @@ The `customer-home` profile automatically filters out disposable system and appl
 > Custom `--exclude` arguments are **not permitted** in `customer-home` mode (raises `RescueError`). This ensures deterministic behavior and reliable customer handoff reports.
 
 #### Approval gating
-Because copying `~/Library` and application bundles can consume hundreds of gigabytes and contain millions of tiny files that dramatically lengthen rescue time, phases `app-data`, `applications`, and `full-home` are strictly gated. Running `scan` or `copy` on a gated phase will fail with an error until the technician records customer approval:
+`app-data`, `applications` and `full-home` (and the legacy `library` scope) reach private application data such as Mail, Messages and Keychains or large application trees, so they need the customer's decision first. `scan` refuses these phases and `copy`/`resume` refuse selections containing their rows until the decision is recorded. Ask the customer first; never approve on their behalf:
 
 ```bash
 uv run macos-data-rescue approve --job-dir "$JOB" --phase app-data --by "Customer Consent via Phone"
 ```
 
-In the GUI, gated phases display an **Approve Phase** button with an interactive modal to enter the approver's name.
+In the GUI, **Record consent…** opens a dialog that requires the approving person's name and an explicit confirmation.
 
 #### Customer handoff reporting
 Jobs created with `customer-home` generate comprehensive, customer-friendly PDF and Markdown reports (`customer-report`) with a visual breakdown of recovered folders and Library data in English or Czech (`--language cs`).
@@ -262,7 +239,9 @@ uv run macos-data-rescue copy --job-dir "$JOB" --timeout 3600
 uv run macos-data-rescue status --job-dir "$JOB"
 ```
 
-In the GUI, select **Volume / Folder (volume)**. The GUI dynamically reveals a **Custom exclude patterns** entry field where repeatable globs can be specified separated by spaces or commas.
+Put `JOB` and `DST` in disjoint directories on the recovery disk. Existing destination files at matching paths are replaced. **Empty directories are not recreated; symlinks and special files are recorded and skipped.** Ownership, bootability and a complete disk image are not recreated — the result is neither a bootable volume nor a filesystem image.
+
+In the GUI, select **Disk / folder (volume)**; an exclude field (comma-separated globs) appears.
 
 #### Custom repeatable exclusions (`--exclude`)
 When using `--profile volume`, operators can specify custom exclusion globs during `init`:
@@ -281,6 +260,7 @@ The `restore` profile handles the final migration step: mirroring rescued data f
 - **1:1 Mirror (zero exclusions):** The restore scan walks the rescued directory (`user-data`) with zero filters. Every file present on the recovery disk is scheduled for restoration. Custom `--exclude` flags are not permitted.
 - **Single scope:** Scans the whole tree without `--phase` (or default `all`); all manifest rows are tagged with phase `restore`. Copy or resume using `--phase restore` or `--phase all`.
 - **Destination overwriting:** Existing destination files at matching relative paths are overwritten. Restoring should always target a fresh user home folder or clean target directory.
+- **Tool-wide limits:** empty directories are not recreated and symbolic links are recorded as `skipped`; check `report` before handoff. Do not generate `customer-report` from a restore job — the customer report comes from the rescue job.
 - **Application archives restored as data:** `Volume Applications/` and `Home Applications/` in the rescued tree are mirrored as plain data archive folders; they do not automatically install back into `/Applications`. Applications should be properly reinstalled on the new macOS installation.
 
 #### CLI usage example:
@@ -336,6 +316,7 @@ To prevent accidental data corruption or bypassing security gates:
 | `0` | Command completed. `copy` / `resume` still return `0` when individual files are `failed` or `timed_out`; check status/report for per-file results. |
 | `1` | Job/runtime error such as an unsafe path, missing manifest, unreadable job config, or unexpected runtime failure. |
 | `2` | CLI usage error from argparse, such as missing required options or invalid argument values. |
+| `3` | `copy` / `resume` paused because storage became unavailable or the destination is full. Unattempted rows stay pending; reconnect the original disks or free space, then run `resume` with the same options. |
 
 ## Phases
 
