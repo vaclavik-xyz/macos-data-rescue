@@ -6,15 +6,8 @@ import pytest
 
 from helpers import ROOT, write_file, init_and_scan
 from macos_data_rescue.cli import build_parser
-from macos_data_rescue.gui import (
-    CaffeinateManager,
-    DataRescueApp,
-    format_eta,
-    format_rate,
-    MESSAGES,
-    PHASE_DESCRIPTIONS,
-    tr,
-)
+from macos_data_rescue.gui.app import CaffeinateManager, DataRescueApp
+from macos_data_rescue.gui.i18n import MESSAGES, PHASE_DESCRIPTIONS, format_eta, format_rate, tr
 from macos_data_rescue.manifest import manifest_path, record_approval
 
 
