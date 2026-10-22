@@ -346,13 +346,16 @@ def test_stop_is_graceful_and_keeps_controls_locked(root, dialogs, tmp_path: Pat
     source = tmp_path / "home"
     write_file(source / "Desktop" / "a.txt", b"a")
     job_dir, _, _ = init_and_scan(tmp_path, source)
-    sleeper = [sys.executable, "-c", "import time\ntry:\n    time.sleep(60)\nexcept KeyboardInterrupt:\n    raise SystemExit(130)"]
+    # "ready" is printed inside the try block: a SIGINT before that would kill the
+    # interpreter during startup (exit -2) instead of reaching the handler
+    sleeper = [sys.executable, "-c", "import time\ntry:\n    print('ready', flush=True)\n    time.sleep(60)\n"
+                                     "except KeyboardInterrupt:\n    raise SystemExit(130)"]
     app = make_app(root, initial_job_dir=job_dir, lang="cs", runner_factory=lambda events: CommandRunner(
         events, command=lambda spec: sleeper, keep_awake_factory=NoKeepAwake))
     pump(root, lambda: app.snapshot is not None)
     assert app.btn_stop.cget("text") == "Zastavit"
     app._start([CommandSpec(("copy", "--job-dir", str(job_dir)))])
-    pump(root, lambda: app.runner._proc is not None)
+    pump(root, lambda: "ready" in app.log_text.get("1.0", "end"))
     app.stop_current_operation()
     assert app.state is OpState.STOPPING
     assert disabled(app.btn_stop) and disabled(app.btn_copy) and disabled(app.btn_open_job)
