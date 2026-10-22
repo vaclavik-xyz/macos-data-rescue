@@ -16,13 +16,8 @@ def phases_for_profile(profile: str | None) -> tuple[str, ...]:
 MESSAGES: dict[str, dict[str, str]] = {
     "cs": {
         "app_title": "macOS Data Rescue — servisní konzole technika",
-        "app_subtitle": "Záchrana dat z poškozeného Macu připojeného přes Share Disk / Target Disk",
-        "language_label": "Jazyk:",
-        "tab_setup": " 1. Příprava a kontrola ",
-        "tab_rescue": " 2. Záchrana a průběh ",
-        "tab_verify": " 3. Ověření a duplikáty ",
-        "tab_reports": " 4. Protokoly ",
-        "paths_title": "Cesty úlohy",
+        "tab_setup": "Příprava",
+        "tab_rescue": "Záchrana",
         "source_path": "Zdroj (jen ke čtení):",
         "source_hint": "Např. /Volumes/Macintosh HD - Data/Users/zakaznik — zdroj se nikdy nemění",
         "dest_path": "Cíl:",
@@ -52,22 +47,16 @@ MESSAGES: dict[str, dict[str, str]] = {
         "preflight_running": "Kontrola probíhá…",
         "preflight_fail": "Kontrola SELHALA ({failures} chyb, {warnings} varování). Opravte chyby, jinak nelze pokračovat.",
         "preflight_ok": "Kontrola v pořádku ({checks} testů, {warnings} varování).",
-        "guide_title": "Doporučený další krok (next)",
-        "guide_default": "Otevřete nebo založte úlohu.",
-        "btn_guide_run": "Spustit: {command}",
         "btn_guide_approve": "Zaznamenat souhlas: {phase}…",
-        "btn_guide_acknowledge": "Pokračovat po potvrzení: {command}…",
-        "btn_guide_none": "Není co spustit",
-        "control_title": "Fáze záchrany",
-        "select_phase": "Fáze:",
+        "select_phase": "Fáze",
         "btn_approve": "Zaznamenat souhlas…",
         "approved_badge": "Schváleno ({by})",
         "no_approval_needed": "Bez schválení",
-        "btn_scan": "1. Skenovat",
-        "btn_copy": "2. Kopírovat",
+        "btn_scan": "Skenovat",
+        "btn_copy": "Kopírovat",
         "btn_stop": "Zastavit",
         "btn_stop_waiting": "Zastavit čekání",
-        "btn_resume": "Pokračovat (resume)",
+        "btn_resume": "Pokračovat",
         "caffeinate": "Nedovolit Macu usnout během operace (caffeinate)",
         "per_file_timeout": "Timeout na soubor (s):",
         "scan_budget": "Časový limit skenu (s, volitelné):",
@@ -82,11 +71,6 @@ MESSAGES: dict[str, dict[str, str]] = {
         "field_reconnect_cooldown": "Chladnutí",
         "field_reconnect_wait": "Čekání na disk",
         "field_max_reconnects": "Max. obnovení",
-        "telemetry_title": "Průběh",
-        "data_volume": "Data:",
-        "file_count": "Soubory:",
-        "speed": "Rychlost: {rate}",
-        "eta": "Zbývá: {eta}",
         "eta_unknown": "—",
         "current_file": "Soubor: {file}",
         "badge_copied": "Zkopírováno",
@@ -98,33 +82,27 @@ MESSAGES: dict[str, dict[str, str]] = {
         "badge_skipped": "Přeskočeno",
         "log_title": "Záznam činnosti",
         "clear_log": "Vymazat záznam",
-        "state_idle": "PŘIPRAVENO",
-        "state_running": "PROBÍHÁ",
-        "state_waiting": "ČEKÁ NA DISK",
-        "state_stopping": "ZASTAVUJI…",
-        "state_stopped": "ZASTAVENO",
-        "state_paused_storage": "POZASTAVENO – ÚLOŽIŠTĚ",
-        "state_failed": "CHYBA",
-        "state_done": "DOKONČENO",
-        "msg_stopping": "Zastavuji operaci. Počkejte, až proces skutečně skončí — "
-                        "do té doby nelze spustit nic dalšího.",
-        "msg_stopped": "Operace byla zastavena. Zapsaný stav zůstal v manifestu; pokračujte doporučeným krokem.",
-        "msg_paused_storage": "Úložiště není dostupné — znovu připojte původní disk (případně uvolněte místo "
-                              "na cílovém disku) a pak pokračujte tlačítkem Pokračovat.",
+        "state_idle": "Připraveno",
+        "state_running": "Probíhá",
+        "state_waiting": "Čeká na disk",
+        "state_stopping": "Zastavuji…",
+        "state_stopped": "Zastaveno",
+        "state_paused_storage": "Pozastaveno",
+        "state_failed": "Chyba",
+        "state_done": "Dokončeno",
+        "msg_stopping": "Počkejte, až proces skutečně skončí; do té doby nelze spustit nic dalšího.",
+        "msg_stopped": "Zapsaný stav zůstal v manifestu. Pokračujte doporučeným krokem.",
+        "msg_paused_storage": "Disk se odpojil nebo došlo místo: znovu připojte původní disk (nebo uvolněte "
+                              "místo na cíli) a stiskněte Pokračovat.",
         "msg_pause_reason": "Důvod: {reason}",
-        "msg_waiting": "Disk se odpojil — automatické obnovení čeká na jeho návrat. Nic dalšího nespouštějte.",
-        "msg_waiting_cooldown": "Chladnutí disku: zbývá {remaining} (pokus {attempt}). Na disk se teď nesahá.",
-        "msg_waiting_wait": "Čekám na návrat disku: nejdéle ještě {remaining} (pokus {attempt}). "
-                            "Pokud se nevrátí sám, připojte ho znovu.",
-        "msg_waiting_stop_hint": "„Zastavit čekání“ běh čistě ukončí; později pokračujte tlačítkem Pokračovat.",
+        "msg_waiting": "Pokud se disk nevrátí sám, připojte ho znovu; kopírování pak pokračuje samo.",
         "msg_waiting_external": "Čeká jiný proces (např. v Terminálu); tato konzole ho nemůže zastavit.",
-        "msg_storage_escalation": "Automatické obnovení to vzdalo — disk se opakovaně odpojoval, nepřibývala "
-                                  "nová data nebo se nevrátil. Doporučení: ukončete kopírování po souborech a "
-                                  "pořiďte image disku nástrojem ddrescue s mapfile, případně disk předejte do "
+        "msg_storage_escalation": "Disk se opakovaně odpojoval nebo se nevrátil. Doporučeno: ukončit kopírování "
+                                  "po souborech a pořídit image disku (ddrescue), případně disk předat do "
                                   "datové laboratoře.",
         "storage_events_summary": "Odpojení disku: {losses} · automaticky obnoveno: {reconnects}",
-        "msg_failed": "Příkaz „{command}“ skončil chybou (kód {code}). Podrobnosti jsou v záznamu činnosti.",
-        "msg_preflight_failed": "Kontrola prostředí selhala, operace nebyla spuštěna. Výsledek je na kartě Příprava.",
+        "msg_failed": "Příkaz {command} skončil chybou (kód {code}). Podrobnosti jsou v záznamu činnosti.",
+        "msg_preflight_failed": "Operace nebyla spuštěna. Výsledek kontroly je na kartě Příprava.",
         "msg_job_unresponsive": "Pracovní složka neodpovídá už {seconds} s — zkontrolujte záchranný disk.",
         "log_running": "▶ {command}",
         "log_wrote_file": "Zapsáno: {path}",
@@ -270,13 +248,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "en": {
         "app_title": "macOS Data Rescue — technician console",
-        "app_subtitle": "Rescue data from a damaged Mac mounted via Share Disk / Target Disk",
-        "language_label": "Language:",
-        "tab_setup": " 1. Setup & preflight ",
-        "tab_rescue": " 2. Rescue & progress ",
-        "tab_verify": " 3. Verification & duplicates ",
-        "tab_reports": " 4. Reports ",
-        "paths_title": "Job paths",
+        "tab_setup": "Setup",
+        "tab_rescue": "Rescue",
         "source_path": "Source (read-only):",
         "source_hint": "E.g. /Volumes/Macintosh HD - Data/Users/customer — the source is never modified",
         "dest_path": "Destination:",
@@ -306,19 +279,13 @@ MESSAGES: dict[str, dict[str, str]] = {
         "preflight_running": "Preflight running…",
         "preflight_fail": "Preflight FAILED ({failures} failures, {warnings} warnings). Fix the failures to continue.",
         "preflight_ok": "Preflight passed ({checks} checks, {warnings} warnings).",
-        "guide_title": "Recommended next step (next)",
-        "guide_default": "Open or create a job.",
-        "btn_guide_run": "Run: {command}",
         "btn_guide_approve": "Record consent: {phase}…",
-        "btn_guide_acknowledge": "Continue after confirmation: {command}…",
-        "btn_guide_none": "Nothing to run",
-        "control_title": "Rescue phases",
-        "select_phase": "Phase:",
+        "select_phase": "Phase",
         "btn_approve": "Record consent…",
         "approved_badge": "Approved ({by})",
         "no_approval_needed": "No approval needed",
-        "btn_scan": "1. Scan",
-        "btn_copy": "2. Copy",
+        "btn_scan": "Scan",
+        "btn_copy": "Copy",
         "btn_stop": "Stop",
         "btn_stop_waiting": "Stop waiting",
         "btn_resume": "Resume",
@@ -336,11 +303,6 @@ MESSAGES: dict[str, dict[str, str]] = {
         "field_reconnect_cooldown": "Cooldown",
         "field_reconnect_wait": "Wait for disk",
         "field_max_reconnects": "Max. reconnects",
-        "telemetry_title": "Progress",
-        "data_volume": "Data:",
-        "file_count": "Files:",
-        "speed": "Speed: {rate}",
-        "eta": "ETA: {eta}",
         "eta_unknown": "—",
         "current_file": "File: {file}",
         "badge_copied": "Copied",
@@ -352,33 +314,27 @@ MESSAGES: dict[str, dict[str, str]] = {
         "badge_skipped": "Skipped",
         "log_title": "Activity log",
         "clear_log": "Clear log",
-        "state_idle": "READY",
-        "state_running": "RUNNING",
-        "state_waiting": "WAITING FOR DISK",
-        "state_stopping": "STOPPING…",
-        "state_stopped": "STOPPED",
-        "state_paused_storage": "PAUSED – STORAGE",
-        "state_failed": "FAILED",
-        "state_done": "DONE",
-        "msg_stopping": "Stopping the operation. Wait until the process has really exited — "
-                        "nothing else can start until then.",
-        "msg_stopped": "The operation was stopped. Committed progress stays in the manifest; "
-                       "continue with the recommended step.",
-        "msg_paused_storage": "Storage unavailable — reconnect the original disk (or free space on the "
-                              "destination), then press Resume.",
+        "state_idle": "Ready",
+        "state_running": "Running",
+        "state_waiting": "Waiting for disk",
+        "state_stopping": "Stopping…",
+        "state_stopped": "Stopped",
+        "state_paused_storage": "Paused",
+        "state_failed": "Failed",
+        "state_done": "Done",
+        "msg_stopping": "Wait until the process has really exited; nothing else can start until then.",
+        "msg_stopped": "Committed progress stays in the manifest. Continue with the recommended step.",
+        "msg_paused_storage": "A disk disconnected or ran out of space: reconnect the original disk (or free "
+                              "space on the destination), then press Resume.",
         "msg_pause_reason": "Reason: {reason}",
-        "msg_waiting": "The disk disconnected — automatic reconnect is waiting for it. Do not start anything else.",
-        "msg_waiting_cooldown": "Disk cooldown: {remaining} left (attempt {attempt}). Nothing touches the disk now.",
-        "msg_waiting_wait": "Waiting for the disk to come back: at most {remaining} more (attempt {attempt}). "
-                            "Reconnect it if it does not come back on its own.",
-        "msg_waiting_stop_hint": "“Stop waiting” ends the run cleanly; press Resume later to continue.",
+        "msg_waiting": "If the disk does not come back on its own, reconnect it; copying then continues by itself.",
         "msg_waiting_external": "Another process (e.g. in Terminal) is waiting; this console cannot stop it.",
-        "msg_storage_escalation": "Automatic reconnect gave up — the disk kept disconnecting, no new data was "
-                                  "copied, or it did not come back. Recommended: stop file-level copying and "
-                                  "image the disk with ddrescue and a mapfile, or hand it to a data recovery lab.",
+        "msg_storage_escalation": "The disk kept disconnecting or did not come back. Recommended: stop "
+                                  "file-level copying and image the disk (ddrescue), or hand it to a data "
+                                  "recovery lab.",
         "storage_events_summary": "Disk disconnections: {losses} · reconnected automatically: {reconnects}",
-        "msg_failed": "Command “{command}” failed (exit {code}). See the activity log for details.",
-        "msg_preflight_failed": "Preflight failed, so the operation was not started. See the Setup tab.",
+        "msg_failed": "Command {command} failed (exit {code}). See the activity log for details.",
+        "msg_preflight_failed": "The operation was not started. The check results are on the Setup tab.",
         "msg_job_unresponsive": "The job directory has not responded for {seconds} s — check the recovery disk.",
         "log_running": "▶ {command}",
         "log_wrote_file": "Wrote: {path}",
@@ -550,17 +506,6 @@ def tr(key: str, lang: str = "cs", **kwargs: object) -> str:
     return template.format(**kwargs) if kwargs else template
 
 
-def format_waiting(view, lang: str = "cs", *, stoppable: bool = True) -> str:
-    """Banner text for a ``state.WaitView``: phase, live countdown, attempt, reason."""
-    key = "msg_waiting_cooldown" if view.phase == "cooldown" else "msg_waiting_wait"
-    attempt = view.attempt if view.attempt is not None else "?"
-    lines = [tr("msg_waiting", lang), tr(key, lang, remaining=format_eta(view.remaining, lang), attempt=attempt)]
-    if view.reason:
-        lines.append(tr("msg_pause_reason", lang, reason=view.reason))
-    lines.append(tr("msg_waiting_stop_hint" if stoppable else "msg_waiting_external", lang))
-    return "\n".join(lines)
-
-
 def format_count(count: int, lang: str = "cs") -> str:
     """Thousands separators: ``1,234`` in English, ``1 234`` (no-break space) in Czech."""
     text = f"{count:,}"
@@ -573,8 +518,11 @@ def localize_decimal(text: str, lang: str = "cs") -> str:
 
 
 def format_percent(fraction: float, lang: str = "cs") -> str:
-    """Whole percent, rounded down so an unfinished job never shows 100."""
-    value = max(0, min(100, int(fraction * 100)))
+    """Whole percent, rounded down so an unfinished job never shows 100.
+
+    The epsilon keeps exact fractions whole: 0.57 * 100 is 56.99999999999999.
+    """
+    value = max(0, min(100, int(fraction * 100 + 1e-9)))
     return f"{value}\u00a0%" if lang == "cs" else f"{value}%"
 
 

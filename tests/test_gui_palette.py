@@ -13,11 +13,14 @@ def test_every_state_color_is_a_palette_name():
     assert {item.color for item in STATE_INFO.values()} <= set(LIGHT)
 
 
-def test_badge_and_level_colors_are_palette_names():
-    pytest.importorskip("tkinter")
-    from macos_data_rescue.gui.app import BADGES, LEVEL_COLORS
+def test_counter_and_level_colors_are_palette_names():
+    from macos_data_rescue.gui.status import PROBLEM_COLORS
 
-    assert {color for _, color in BADGES} | set(LEVEL_COLORS.values()) <= set(LIGHT)
+    assert set(PROBLEM_COLORS.values()) | {"muted", "on_accent"} <= set(LIGHT)
+    pytest.importorskip("tkinter")
+    from macos_data_rescue.gui.app import LEVEL_COLORS
+
+    assert set(LEVEL_COLORS.values()) <= set(LIGHT)
 
 
 def test_appearance_probe_falls_back_to_light():

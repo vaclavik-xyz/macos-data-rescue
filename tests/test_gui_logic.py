@@ -34,7 +34,7 @@ from macos_data_rescue.gui.commands import (
 )
 from macos_data_rescue.manifest import connect
 from macos_data_rescue.storage_events import record_event
-from macos_data_rescue.gui.i18n import elide_middle, format_count, format_percent, format_waiting, localize_decimal
+from macos_data_rescue.gui.i18n import elide_middle, format_count, format_percent, localize_decimal
 from macos_data_rescue.gui.monitor import JobMonitor, JobSnapshot, Telemetry, read_job_snapshot, telemetry_from
 from macos_data_rescue.gui.runner import CommandRunner, KeepAwake, OutputLine, RunFinished, RunnerNotice
 from macos_data_rescue.gui.state import (
@@ -387,7 +387,7 @@ def test_status_card_pause_escalation_and_failures() -> None:
                             finish=RunFinished((CommandSpec(("preflight",)), copy), 0, 1, False))
     assert preflight.headline == "Kontrola prostředí selhala" and "Příprava" in preflight.body
     failed = status_view(OpState.FAILED, "en", job_loaded=True, finish=RunFinished((copy,), 0, 2, False))
-    assert failed.headline == "Operation failed" and "copy" in failed.body and "exit 2" in failed.body
+    assert failed.headline == "Operation failed" and "copy failed (exit 2)" in failed.body
 
 
 @pytest.mark.parametrize("state", [OpState.RUNNING, OpState.WAITING, OpState.STOPPING])
@@ -420,29 +420,13 @@ def test_locale_formatters() -> None:
     assert format_count(1_234_567, "en") == "1,234,567"
     assert localize_decimal("19.3 MiB", "cs") == "19,3 MiB" and localize_decimal("19.3 MiB", "en") == "19.3 MiB"
     assert format_percent(0.999, "cs") == "99\u00a0%" and format_percent(1.0, "en") == "100%"
+    assert format_percent(57 / 100, "en") == "57%" and format_percent(29 / 100, "en") == "29%"
     assert elide_middle("short", 10, len) == "short"
     assert elide_middle("abcdefghij", 5, len) == "ab…ij"
     assert elide_middle("abcdefghij", 1, len) == "…"
     path = "Documents/Projects/2024/Customer/very/deep/folder/scan-0042.pdf"
     short = elide_middle(path, 30, len)
     assert len(short) == 30 and short.startswith("Documents/") and short.endswith("scan-0042.pdf")
-
-
-def test_waiting_banner_cooldown_and_wait_phases() -> None:
-    now = datetime(2026, 10, 22, 1, 0, 55, tzinfo=timezone.utc)
-    cooldown = wait_view({"state": "waiting", "wait_phase": "cooldown", "wait_until": "2026-10-22T01:05:00+00:00",
-                          "attempt": 2, "reason": "source unavailable"}, now)
-    assert (cooldown.phase, cooldown.remaining, cooldown.attempt) == ("cooldown", 245, 2)
-    text = format_waiting(cooldown, "cs")
-    assert "Chladnutí disku: zbývá 4m 05s (pokus 2)" in text
-    assert "Důvod: source unavailable" in text and "Zastavit čekání" in text
-    waiting = wait_view({"wait_phase": "waiting", "wait_until": "2026-10-22T01:30:55+00:00", "attempt": 1}, now)
-    english = format_waiting(waiting, "en", stoppable=False)
-    assert "at most 30m 00s more (attempt 1)" in english
-    assert "this console cannot stop it" in english and "Reason" not in english
-    assert wait_view({"wait_phase": "waiting", "wait_until": "2026-10-22T01:00:00+00:00"}, now).remaining == 0
-    unknown = wait_view({"wait_phase": "waiting", "wait_until": "garbage"}, now)
-    assert unknown.remaining is None and "nejdéle ještě — (pokus ?)" in format_waiting(unknown, "cs")
 
 
 def test_loaded_job_fields_are_read_only_when_idle() -> None:
