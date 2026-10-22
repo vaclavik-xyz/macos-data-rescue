@@ -106,7 +106,7 @@ When `copy_job` catches `StoragePaused`:
 Today the active file returns to `pending` without consuming a retry. That stays
 for the first loss. If storage is lost again while the **same** file is being
 read, the file is marked `failed` with reason "storage lost twice while reading
-this file" (consuming a retry), so the queue moves on and a bad region cannot
+this file" (that read attempt stays consumed), so the queue moves on and a bad region cannot
 pin the whole night to one file. It stays retryable later. (Builder call.)
 
 ### Stop criteria (any one ends the run with exit 3 and an escalation note)
@@ -134,8 +134,9 @@ On these stops `next` recommends: stop file-level copying and image the disk
 ### Records
 
 New manifest table `storage_events` (timestamp, role source/dest, kind:
-`lost` / `cooldown` / `remount-attempt` / `remounted` / `resumed` / `gave-up`,
-detail). Reported in `report` (technician) and summarized in `status`.
+`lost` / `cooldown` / `remount-attempt` / `remounted` / `resumed` / `gave-up` / `stopped` /
+`acknowledged`, detail). `stopped` (operator stop while waiting) is not a
+give-up and never blocks a later auto-reconnect. Reported in `report` (technician) and summarized in `status`.
 Customer report: one neutral line ("the source disk disconnected N times; the
 rescue resumed automatically") only if N > 0.
 
@@ -146,9 +147,10 @@ rescue resumed automatically") only if N > 0.
   scripts and the runbook behave exactly as today.
 - GUI: "Automatically reconnect after disk loss" checkbox, default **on** in the
   GUI, plus a "Waiting for disk" state with countdown and attempt counter and a
-  "Stop waiting" action that ends the run cleanly (exit 3, `gave-up` recorded).
-  The CLI therefore handles SIGTERM/SIGINT during copy and waiting by recording
-  the event and finishing the activity as `stopped`. Implemented after the GUI
+  "Stop waiting" action that ends the run cleanly (exit 3, `stopped` recorded,
+  no give-up block). The CLI maps SIGTERM to the same handling as SIGINT: while
+  waiting it records `stopped` and exits 3; during an active copy pass it keeps
+  today's `interrupted` path (exit 130). Implemented after the GUI
   console PR is merged, on top of its state model. (Builder call.)
 - Docs: runbook section for overnight runs (cooling, power settings, what the
   loop can and cannot do), rescue-operations update.
