@@ -15,6 +15,7 @@ from macos_data_rescue.guide import base_cmd, quoted, storage_escalation_lines
 from macos_data_rescue.gui.commands import (
     ACK_FLAG,
     CommandSpec,
+    GuideAction,
     ReconnectOptions,
     copy_spec,
     needs_storage_acknowledgement,
@@ -33,8 +34,8 @@ from macos_data_rescue.gui.commands import (
 )
 from macos_data_rescue.manifest import connect
 from macos_data_rescue.storage_events import record_event
-from macos_data_rescue.gui.i18n import format_waiting
-from macos_data_rescue.gui.monitor import JobMonitor, JobSnapshot, read_job_snapshot, telemetry_from
+from macos_data_rescue.gui.i18n import elide_middle, format_count, format_percent, format_waiting, localize_decimal
+from macos_data_rescue.gui.monitor import JobMonitor, JobSnapshot, Telemetry, read_job_snapshot, telemetry_from
 from macos_data_rescue.gui.runner import CommandRunner, KeepAwake, OutputLine, RunFinished, RunnerNotice
 from macos_data_rescue.gui.state import (
     OpState,
@@ -44,6 +45,7 @@ from macos_data_rescue.gui.state import (
     state_after_exit,
     wait_view,
 )
+from macos_data_rescue.gui.status import action_label, counter_items, progress_summary, status_view
 
 
 JOB = Path("/Volumes/RecoverySSD/Customer/.rescue")
@@ -316,6 +318,114 @@ def test_waiting_activity_is_never_shown_as_running_or_idle() -> None:
     assert reconcile_with_activity(OpState.WAITING, "paused") is OpState.PAUSED_STORAGE
     assert reconcile_with_activity(OpState.WAITING, "finished") is OpState.IDLE
     assert reconcile_with_activity(OpState.WAITING, "interrupted") is OpState.IDLE
+
+
+def test_waiting_status_shows_countdown_attempt_and_who_can_stop() -> None:
+    now = datetime(2026, 10, 22, 1, 0, 55, tzinfo=timezone.utc)
+    activity = {"state": "waiting", "wait_phase": "cooldown", "wait_until": "2026-10-22T01:05:00+00:00",
+                "attempt": 2, "reason": "source unavailable"}
+    cooldown = wait_view(activity, now)
+    assert (cooldown.phase, cooldown.remaining, cooldown.attempt) == ("cooldown", 245, 2)
+    view = status_view(OpState.WAITING, "cs", job_loaded=True, activity=activity, now=now)
+    assert view.headline == "Chladnutí disku — 4m 05s (pokus 2)"
+    assert (view.tone, view.action) == ("orange", "none")
+    assert "source unavailable" not in view.body, "the raw reason belongs to the details"
+    waiting = {"wait_phase": "waiting", "wait_until": "2026-10-22T01:30:55+00:00", "attempt": 1}
+    external = status_view(OpState.WAITING, "en", job_loaded=True, own_child=False, activity=waiting, now=now)
+    assert external.headline == "Waiting for the disk — 30m 00s (attempt 1)"
+    assert "this console cannot stop it" in external.body
+    own = status_view(OpState.WAITING, "en", job_loaded=True, activity=waiting, now=now)
+    assert "cannot stop" not in own.body
+    assert wait_view({"wait_phase": "waiting", "wait_until": "2026-10-22T01:00:00+00:00"}, now).remaining == 0
+    unknown = {"wait_phase": "waiting", "wait_until": "garbage"}
+    assert wait_view(unknown, now).remaining is None
+    assert status_view(OpState.WAITING, "cs", job_loaded=True, activity=unknown, now=now).headline == \
+        "Čekám na disk — — (pokus ?)"
+
+
+def recommendation(command: str, state: str = "state: action=copy phase=visible-home rows=3") -> tuple[str, GuideAction]:
+    text = guide_text(command, state=state)
+    return text, parse_guide_action(text, JOB)
+
+
+def test_status_card_turns_next_into_one_sentence_and_one_action() -> None:
+    copy = base_cmd("copy", "--job-dir", quoted(JOB), "--phase", "visible-home", "--timeout", "3600")
+    text, action = recommendation(copy)
+    view = status_view(OpState.IDLE, "cs", job_loaded=True, guide_text=text, action=action)
+    assert (view.headline, view.action) == ("Připraveno", "guide")
+    assert view.body == "Doporučený krok: zkopírovat fázi visible-home."
+    assert action_label(action, "cs") == "Kopírovat visible-home"
+    assert action_label(action, "en") == "Copy visible-home"
+
+    text, action = recommendation(base_cmd("approve", "--job-dir", quoted(JOB), "--phase", "app-data"),
+                                  state="state: approval-required phase=app-data")
+    view = status_view(OpState.DONE, "en", job_loaded=True, guide_text=text, action=action)
+    assert (view.headline, view.action) == ("Waiting for customer consent", "guide")
+    assert action_label(action, "cs") == "Zaznamenat souhlas: app-data…"
+
+    done = "\n".join([f"job={JOB} profile=customer-home", "state: core-phases-complete",
+                      "done: follow the handoff checklist in docs/agent-runbook.md"])
+    view = status_view(OpState.IDLE, "cs", job_loaded=True, guide_text=done, action=parse_guide_action(done, JOB))
+    assert (view.headline, view.tone, view.action) == ("Hotovo", "green", "none")
+    no_job = status_view(OpState.IDLE, "en", job_loaded=False)
+    assert (no_job.headline, no_job.action) == ("No job open", "none")
+
+
+def test_status_card_pause_escalation_and_failures() -> None:
+    paused = status_view(OpState.PAUSED_STORAGE, "cs", job_loaded=True)
+    assert (paused.headline, paused.tone, paused.action) == ("Pozastaveno: úložiště nedostupné", "red", "resume")
+    assert "znovu připojte původní disk" in paused.body
+    escalation = status_view(OpState.PAUSED_STORAGE, "en", job_loaded=True, escalation=True)
+    assert (escalation.headline, escalation.action) == ("Automatic reconnect gave up", "resume")
+    assert "ddrescue" in escalation.body
+    # the acknowledging recommendation only gets a label; the click still asks first
+    ack = GuideAction("acknowledge", spec=CommandSpec(("resume", "--job-dir", str(JOB), "--phase", "visible-home")))
+    assert action_label(ack, "cs") == "Přesto pokračovat…"
+
+    copy = CommandSpec(("copy", "--job-dir", str(JOB)))
+    preflight = status_view(OpState.FAILED, "cs", job_loaded=True,
+                            finish=RunFinished((CommandSpec(("preflight",)), copy), 0, 1, False))
+    assert preflight.headline == "Kontrola prostředí selhala" and "Příprava" in preflight.body
+    failed = status_view(OpState.FAILED, "en", job_loaded=True, finish=RunFinished((copy,), 0, 2, False))
+    assert failed.headline == "Operation failed" and "copy" in failed.body and "exit 2" in failed.body
+
+
+@pytest.mark.parametrize("state", [OpState.RUNNING, OpState.WAITING, OpState.STOPPING])
+def test_busy_status_never_offers_a_primary_action(state: OpState) -> None:
+    text, action = recommendation(base_cmd("copy", "--job-dir", quoted(JOB), "--phase", "all"))
+    view = status_view(state, "cs", job_loaded=True, guide_text=text, action=action,
+                       running=CommandSpec(("copy", "--job-dir", str(JOB), "--phase", "visible-home")))
+    assert view.action == "none"
+    if state is OpState.RUNNING:
+        assert view.headline == "Kopíruji · visible-home"
+    assert status_view(OpState.RUNNING, "en", job_loaded=True).headline == "Operation running"
+
+
+def test_progress_summary_and_counters_are_localized() -> None:
+    view = Telemetry(total_files=1280, rescued_files=1050, rescued_bytes=20_287_220, total_bytes=40_452_940,
+                     rate_bytes_s=2_100_000, eta_seconds=725)
+    assert progress_summary(view, "cs") == "19,3 MiB / 38,6 MiB · 1\u00a0050 / 1\u00a0280 souborů · 2,10 MB/s · zbývá 12m 05s"
+    assert progress_summary(view, "en") == "19.3 MiB / 38.6 MiB · 1,050 / 1,280 files · 2.10 MB/s · 12m 05s left"
+    assert progress_summary(Telemetry(), "en") == "0 / 0 files"
+    items = {key: (text, tone) for key, text, tone in
+             counter_items({"badge_copied": 5, "badge_failed": 2, "badge_timed_out": 0}, "cs")}
+    assert items["badge_copied"] == ("Zkopírováno 5", "")
+    assert items["badge_failed"] == ("Selhalo 2", "red")
+    assert items["badge_timed_out"] == ("Vypršel čas 0", "muted")
+    assert len(items) == 7
+
+
+def test_locale_formatters() -> None:
+    assert format_count(1_234_567, "cs") == "1\u00a0234\u00a0567"
+    assert format_count(1_234_567, "en") == "1,234,567"
+    assert localize_decimal("19.3 MiB", "cs") == "19,3 MiB" and localize_decimal("19.3 MiB", "en") == "19.3 MiB"
+    assert format_percent(0.999, "cs") == "99\u00a0%" and format_percent(1.0, "en") == "100%"
+    assert elide_middle("short", 10, len) == "short"
+    assert elide_middle("abcdefghij", 5, len) == "ab…ij"
+    assert elide_middle("abcdefghij", 1, len) == "…"
+    path = "Documents/Projects/2024/Customer/very/deep/folder/scan-0042.pdf"
+    short = elide_middle(path, 30, len)
+    assert len(short) == 30 and short.startswith("Documents/") and short.endswith("scan-0042.pdf")
 
 
 def test_waiting_banner_cooldown_and_wait_phases() -> None:

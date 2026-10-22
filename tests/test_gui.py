@@ -39,6 +39,7 @@ def test_gui_cli_argument_parser() -> None:
 def test_logic_modules_do_not_import_tkinter() -> None:
     code = ("import sys\nimport macos_data_rescue.gui, macos_data_rescue.gui.runner, macos_data_rescue.gui.monitor\n"
             "import macos_data_rescue.gui.state, macos_data_rescue.gui.commands, macos_data_rescue.gui.i18n\n"
+            "import macos_data_rescue.gui.status, macos_data_rescue.gui.palette\n"
             "assert 'tkinter' not in sys.modules, 'tkinter imported'\n")
     subprocess.run([sys.executable, "-c", code], check=True, timeout=30)
 

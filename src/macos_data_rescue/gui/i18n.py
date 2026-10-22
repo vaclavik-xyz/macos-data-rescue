@@ -214,6 +214,59 @@ MESSAGES: dict[str, dict[str, str]] = {
         "confirm_fallback_msg": "Nahradit selhaný soubor\n{path}\n\nobsahem kandidáta\n{candidate}?\n\n"
                                 "Shoda: {evidence}\nPokračujte jen, pokud jste ověřili, že jde o stejný soubor.",
         "saved_msg": "Uloženo: {path}",
+        "tab_results": "Výsledky",
+        "btn_resume_anyway": "Přesto pokračovat…",
+        "do_scan": "Skenovat {phase}",
+        "do_copy": "Kopírovat {phase}",
+        "do_resume": "Pokračovat {phase}",
+        "do_verify": "Ověřit integritu",
+        "do_report": "Vytvořit technickou zprávu",
+        "do_customer_report": "Vytvořit protokol pro zákazníka",
+        "do_status": "Zobrazit stav úlohy",
+        "detail": "Detail",
+        "advanced": "Pokročilé",
+        "status_no_job": "Žádná otevřená úloha",
+        "status_no_job_body": "Na kartě Příprava založte novou úlohu, nebo otevřete existující.",
+        "status_ready": "Připraveno",
+        "status_needs_consent": "Čeká na souhlas zákazníka",
+        "status_copy_complete": "Kopírování dokončeno",
+        "status_done": "Hotovo",
+        "status_done_body": "Vše je zachráněno a protokoly jsou vytvořené. Projděte předávací kontrolu podle docs/agent-runbook.md.",
+        "status_needs_review": "Potřeba ruční kontroly",
+        "status_needs_review_body": "Některé soubory se nepodařilo zachránit; projděte je v technické zprávě.",
+        "status_integrity_failed": "Ověření cíle selhalo",
+        "status_integrity_failed_body": "Znovu připojte zdroj, zopakujte kopírování a pak znovu ověřte integritu.",
+        "status_restore_check_body": "Ověřte opakovaným během, že už se nic nekopíruje, a vytvořte technickou zprávu.",
+        "status_failed": "Operace selhala",
+        "status_preflight_failed": "Kontrola prostředí selhala",
+        "status_stopped": "Zastaveno",
+        "status_stopping": "Zastavuji…",
+        "status_paused": "Pozastaveno: úložiště nedostupné",
+        "status_escalation": "Automatické obnovení to vzdalo",
+        "status_cooldown": "Chladnutí disku — {remaining} (pokus {attempt})",
+        "status_waiting": "Čekám na disk — {remaining} (pokus {attempt})",
+        "status_running_body": "Nechte operaci doběhnout. Zapsaný stav se průběžně ukládá do manifestu.",
+        "status_run_preflight": "Kontroluji prostředí",
+        "status_run_init": "Zakládám úlohu",
+        "status_run_scan": "Skenuji",
+        "status_run_copy": "Kopíruji",
+        "status_run_verify": "Ověřuji integritu",
+        "status_run_approve": "Zaznamenávám souhlas",
+        "status_run_report": "Vytvářím protokol",
+        "status_run_other": "Probíhá operace",
+        "status_next_scan": "Doporučený krok: naskenovat fázi {phase}.",
+        "status_next_copy": "Doporučený krok: zkopírovat fázi {phase}.",
+        "status_next_resume": "Doporučený krok: pokračovat v kopírování fáze {phase}.",
+        "status_next_verify": "Doporučený krok: ověřit integritu zkopírovaných dat.",
+        "status_next_reports": "Zbývá vytvořit protokoly.",
+        "status_next_status": "Doporučený krok: zkontrolovat stav úlohy; postup je v Detailu.",
+        "status_next_approve": "Fáze {phase} vyžaduje výslovný souhlas zákazníka. Zaznamenejte ho, jen pokud zákazník skutečně souhlasil.",
+        "status_next_none": "Žádný krok nelze spustit automaticky; postup je v Detailu.",
+        "reconnect_hint_on": "Automatické obnovení po odpojení: zapnuto",
+        "reconnect_hint_off": "Automatické obnovení po odpojení: vypnuto",
+        "summary_files": "{done} / {total} souborů",
+        "summary_eta": "zbývá {eta}",
+        "status_cooldown_body": "Disk se odpojil. Během chladnutí na něj nesahejte; kopírování se pak obnoví samo.",
     },
     "en": {
         "app_title": "macOS Data Rescue — technician console",
@@ -415,6 +468,59 @@ MESSAGES: dict[str, dict[str, str]] = {
         "confirm_fallback_msg": "Replace the failed file\n{path}\n\nwith the content of the candidate\n{candidate}?\n\n"
                                 "Match: {evidence}\nContinue only if you verified it is the same file.",
         "saved_msg": "Saved: {path}",
+        "tab_results": "Results",
+        "btn_resume_anyway": "Continue anyway…",
+        "do_scan": "Scan {phase}",
+        "do_copy": "Copy {phase}",
+        "do_resume": "Resume {phase}",
+        "do_verify": "Verify integrity",
+        "do_report": "Create technician report",
+        "do_customer_report": "Create customer report",
+        "do_status": "Show job status",
+        "detail": "Details",
+        "advanced": "Advanced",
+        "status_no_job": "No job open",
+        "status_no_job_body": "Create a new job on the Setup tab, or open an existing one.",
+        "status_ready": "Ready",
+        "status_needs_consent": "Waiting for customer consent",
+        "status_copy_complete": "Copying complete",
+        "status_done": "Done",
+        "status_done_body": "Everything is rescued and the reports exist. Go through the handoff checklist in docs/agent-runbook.md.",
+        "status_needs_review": "Manual review needed",
+        "status_needs_review_body": "Some files could not be rescued; review them in the technician report.",
+        "status_integrity_failed": "Destination verification failed",
+        "status_integrity_failed_body": "Reconnect the source, repeat the copy, then verify integrity again.",
+        "status_restore_check_body": "Confirm with another run that nothing is copied any more, then create the technician report.",
+        "status_failed": "Operation failed",
+        "status_preflight_failed": "Preflight failed",
+        "status_stopped": "Stopped",
+        "status_stopping": "Stopping…",
+        "status_paused": "Paused: storage unavailable",
+        "status_escalation": "Automatic reconnect gave up",
+        "status_cooldown": "Disk cooldown — {remaining} (attempt {attempt})",
+        "status_waiting": "Waiting for the disk — {remaining} (attempt {attempt})",
+        "status_running_body": "Let the operation finish. Progress is saved to the manifest as it goes.",
+        "status_run_preflight": "Checking the environment",
+        "status_run_init": "Creating the job",
+        "status_run_scan": "Scanning",
+        "status_run_copy": "Copying",
+        "status_run_verify": "Verifying integrity",
+        "status_run_approve": "Recording consent",
+        "status_run_report": "Creating report",
+        "status_run_other": "Operation running",
+        "status_next_scan": "Recommended: scan phase {phase}.",
+        "status_next_copy": "Recommended: copy phase {phase}.",
+        "status_next_resume": "Recommended: resume copying phase {phase}.",
+        "status_next_verify": "Recommended: verify the integrity of the copied data.",
+        "status_next_reports": "The reports are still missing.",
+        "status_next_status": "Recommended: check the job status; the steps are in Details.",
+        "status_next_approve": "Phase {phase} needs the customer's explicit consent. Record it only if the customer actually agreed.",
+        "status_next_none": "No step can be started automatically; see Details.",
+        "reconnect_hint_on": "Automatic reconnect after disk loss: on",
+        "reconnect_hint_off": "Automatic reconnect after disk loss: off",
+        "summary_files": "{done} / {total} files",
+        "summary_eta": "{eta} left",
+        "status_cooldown_body": "The disk disconnected. Do not touch it during the cooldown; copying then resumes by itself.",
     },
 }
 
@@ -453,6 +559,42 @@ def format_waiting(view, lang: str = "cs", *, stoppable: bool = True) -> str:
         lines.append(tr("msg_pause_reason", lang, reason=view.reason))
     lines.append(tr("msg_waiting_stop_hint" if stoppable else "msg_waiting_external", lang))
     return "\n".join(lines)
+
+
+def format_count(count: int, lang: str = "cs") -> str:
+    """Thousands separators: ``1,234`` in English, ``1 234`` (no-break space) in Czech."""
+    text = f"{count:,}"
+    return text.replace(",", "\u00a0") if lang == "cs" else text
+
+
+def localize_decimal(text: str, lang: str = "cs") -> str:
+    """Decimal comma for Czech in an already formatted number such as ``19.3 MiB``."""
+    return text.replace(".", ",") if lang == "cs" else text
+
+
+def format_percent(fraction: float, lang: str = "cs") -> str:
+    """Whole percent, rounded down so an unfinished job never shows 100."""
+    value = max(0, min(100, int(fraction * 100)))
+    return f"{value}\u00a0%" if lang == "cs" else f"{value}%"
+
+
+def elide_middle(text: str, max_width: int, measure) -> str:
+    """Shorten ``text`` to ``max_width`` (in ``measure`` units) with an ellipsis in the middle.
+
+    Both ends of a path stay readable: the top folder and the file name.
+    """
+    if max_width <= 0 or measure(text) <= max_width:
+        return text
+    best, low, high = "…", 0, len(text) - 1
+    while low <= high:
+        keep = (low + high) // 2
+        head, tail = (keep + 1) // 2, keep // 2
+        candidate = text[:head] + "…" + (text[-tail:] if tail else "")
+        if measure(candidate) <= max_width:
+            best, low = candidate, keep + 1
+        else:
+            high = keep - 1
+    return best
 
 
 def format_rate(rate_bytes_s: float) -> str:
