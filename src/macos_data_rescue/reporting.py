@@ -181,8 +181,8 @@ CUSTOMER_REPORT_TEXT = {
         recovered_data="Recovered data",
         result_summary="Result summary",
         page="Page",
-        disconnect_note=("Disk disconnections during the rescue: {n}. "
-                         "Copying resumed automatically after each reconnect."),
+        # Neutral on purpose: the loop may also have stopped or been stopped.
+        disconnect_note="Disk disconnections during the rescue: {n}.",
     ),
     "cs": CustomerReportText(
         title="Zpráva o záchraně dat",
@@ -262,8 +262,7 @@ CUSTOMER_REPORT_TEXT = {
         recovered_data="Zachráněná data",
         result_summary="Souhrn výsledku",
         page="Strana",
-        disconnect_note=("Počet odpojení disku během záchrany: {n}. "
-                         "Kopírování po každém opětovném připojení automaticky pokračovalo."),
+        disconnect_note="Počet odpojení disku během záchrany: {n}.",
     ),
 }
 PDF_CUSTOM_GLYPHS = (
