@@ -14,6 +14,7 @@ import subprocess  # nosec B404
 import threading
 import tkinter as tk
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
@@ -23,10 +24,11 @@ from ..manifest import GATED_PHASES
 from ..reporting import format_size, report
 from . import commands as cmd
 from .commands import CommandSpec, GuideAction
-from .i18n import LANGUAGE_NAMES, PHASE_DESCRIPTIONS, format_eta, format_rate, phases_for_profile, tr
+from .i18n import LANGUAGE_NAMES, PHASE_DESCRIPTIONS, format_eta, format_rate, format_waiting, phases_for_profile, tr
 from .monitor import BackgroundTasks, JobMonitor, JobSnapshot, SnapshotResult, TaskDone, telemetry_from
 from .runner import CommandRunner, OutputLine, RunFinished, RunnerBusy, RunnerNotice
-from .state import OpState, control_states, info, reconcile_with_activity, state_after_exit
+from .palette import is_dark_appearance, palette
+from .state import STOPPABLE, OpState, control_states, info, reconcile_with_activity, state_after_exit, wait_view
 
 LOG = logging.getLogger(__name__)
 
@@ -34,10 +36,11 @@ PUMP_MS = 100
 POLL_MS = 1000
 MAX_EVENTS_PER_PUMP = 300
 UNRESPONSIVE_AFTER_S = 5.0
-BADGES = (("badge_copied", "#15803d"), ("badge_fallback", "#0e7490"), ("badge_pending", "#1d4ed8"),
-          ("badge_timed_out", "#b45309"), ("badge_failed", "#b91c1c"), ("badge_compressed", "#7c3aed"),
-          ("badge_skipped", "#4b5563"))
-LEVEL_COLORS = {"ok": "#15803d", "warn": "#b45309", "fail": "#b91c1c"}
+# palette names (gui/palette.py), resolved for the current light/dark appearance
+BADGES = (("badge_copied", "green"), ("badge_fallback", "cyan"), ("badge_pending", "blue"),
+          ("badge_timed_out", "amber"), ("badge_failed", "red"), ("badge_compressed", "violet"),
+          ("badge_skipped", "gray"))
+LEVEL_COLORS = {"ok": "green", "warn": "amber", "fail": "red"}
 
 
 def set_enabled(widget: Any, enabled: bool, *, readonly: bool = False) -> None:
@@ -53,6 +56,7 @@ class DataRescueApp:
                  initial_dest: Path | None = None, lang: str = "cs", *,
                  runner_factory: Callable[[queue.Queue], CommandRunner] = CommandRunner) -> None:
         self.root = root
+        self.colors = palette(is_dark_appearance(root))
         self.lang = lang if lang in LANGUAGE_NAMES else "cs"
         self.events: queue.Queue = queue.Queue()
         self.runner = runner_factory(self.events)
@@ -66,6 +70,10 @@ class DataRescueApp:
         self._loading: tuple[Path, bool] | None = None  # (job dir, report errors in a dialog)
         self._last_read_error: str | None = None
         self._last_finish: RunFinished | None = None
+        self._finished_at: float | None = None  # monitor clock when the last command finished
+        # True from a successful start until its RunFinished is handled (the
+        # runner itself turns idle slightly earlier, as soon as the child is reaped)
+        self._own_run = False
         self._on_success: Callable[[], None] | None = None
         self._close_requested = False
         self._destroyed = False
@@ -90,6 +98,11 @@ class DataRescueApp:
         self.scan_budget_var = tk.StringVar(value="300")
         self.limit_var = tk.StringVar()
         self.caffeinate_var = tk.BooleanVar(value=True)
+        # on by default in the console (the CLI default is off); see docs/agent-runbook.md
+        self.auto_reconnect_var = tk.BooleanVar(value=True)
+        self.reconnect_cooldown_var = tk.StringVar(value=cmd.number_text(cmd.DEFAULT_COOLDOWN))
+        self.reconnect_wait_var = tk.StringVar(value=cmd.number_text(cmd.DEFAULT_WAIT))
+        self.max_reconnects_var = tk.StringVar(value=str(cmd.DEFAULT_MAX_RECONNECTS))
         self.lang_var = tk.StringVar(value=LANGUAGE_NAMES[self.lang])
         self.cust_format_var = tk.StringVar(value="pdf")
         self.cust_lang_var = tk.StringVar(value=self.lang)
@@ -132,7 +145,7 @@ class DataRescueApp:
         self.lang_combo.bind("<<ComboboxSelected>>", self._on_language_changed)
         self.state_badge = ttk.Label(right, font=("System", 12, "bold"), padding=(10, 4), relief="groove")
         self.state_badge.grid(row=0, column=2)
-        self.lbl_health = ttk.Label(right, foreground="#b91c1c", font=("System", 10))
+        self.lbl_health = ttk.Label(right, foreground=self.colors["red"], font=("System", 10))
         self.lbl_health.grid(row=1, column=0, columnspan=3, sticky="e")
 
         # state banner (paused storage / failure / stopping), visible on every tab
@@ -194,7 +207,7 @@ class DataRescueApp:
         self.lbl_excludes.pack(side="left", padx=(0, 8))
         self.excludes_entry = ttk.Entry(self.excludes_row, textvariable=self.excludes_var)
         self.excludes_entry.pack(side="left", fill="x", expand=True)
-        self.lbl_job_loaded = ttk.Label(self.paths_group, foreground="#1d4ed8", wraplength=820)
+        self.lbl_job_loaded = ttk.Label(self.paths_group, foreground=self.colors["blue"], wraplength=820)
 
         buttons = ttk.Frame(frame)
         buttons.grid(row=1, column=0, sticky="ew", pady=(0, 8))
@@ -217,7 +230,7 @@ class DataRescueApp:
         self.preflight_tree.column("check", width=170)
         self.preflight_tree.column("detail", width=560)
         for level, color in LEVEL_COLORS.items():
-            self.preflight_tree.tag_configure(level, foreground=color)
+            self.preflight_tree.tag_configure(level, foreground=self.colors[color])
         scroll = ttk.Scrollbar(self.results_group, orient="vertical", command=self.preflight_tree.yview)
         self.preflight_tree.configure(yscrollcommand=scroll.set)
         self.preflight_tree.grid(row=0, column=0, sticky="nsew")
@@ -233,10 +246,16 @@ class DataRescueApp:
         self.guide_group = ttk.LabelFrame(frame, padding=10)
         self.guide_group.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         self.guide_group.columnconfigure(0, weight=1)
-        self.guide_label = ttk.Label(self.guide_group, font=("Menlo", 11), wraplength=640, justify="left")
-        self.guide_label.grid(row=0, column=0, sticky="w", padx=4)
+        # fixed height with a scrollbar: an escalation text is long and must not
+        # push the progress and log sections out of the window
+        self.guide_text = tk.Text(self.guide_group, font=("Menlo", 11), wrap="word", height=5, width=40,
+                                  relief="flat", borderwidth=0, highlightthickness=0, state="disabled")
+        self.guide_text.grid(row=0, column=0, sticky="ew", padx=4)
+        guide_scroll = ttk.Scrollbar(self.guide_group, orient="vertical", command=self.guide_text.yview)
+        guide_scroll.grid(row=0, column=1, sticky="ns")
+        self.guide_text.configure(yscrollcommand=guide_scroll.set)
         self.btn_guide = ttk.Button(self.guide_group, command=self.execute_recommended_step)
-        self.btn_guide.grid(row=0, column=1, sticky="ne", padx=4)
+        self.btn_guide.grid(row=0, column=2, sticky="ne", padx=4)
 
         self.control_group = ttk.LabelFrame(frame, padding=10)
         self.control_group.grid(row=1, column=0, sticky="ew", pady=(0, 8))
@@ -247,7 +266,7 @@ class DataRescueApp:
                                         values=phases_for_profile(None), state="readonly", width=16)
         self.phase_combo.grid(row=0, column=1, sticky="w", padx=6)
         self.phase_combo.bind("<<ComboboxSelected>>", lambda _e: self._render_phase())
-        self.phase_desc_label = ttk.Label(self.control_group, font=("System", 10), foreground="#1d4ed8",
+        self.phase_desc_label = ttk.Label(self.control_group, font=("System", 10), foreground=self.colors["blue"],
                                           wraplength=520)
         self.phase_desc_label.grid(row=0, column=2, sticky="w", padx=6)
         self.btn_approve = ttk.Button(self.control_group, command=self.approve_phase_dialog)
@@ -274,6 +293,19 @@ class DataRescueApp:
             entry.pack(side="left", padx=(0, 14))
             self.option_widgets.append((label, entry))
 
+        reconnect = ttk.Frame(self.control_group)
+        reconnect.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+        self.chk_auto_reconnect = ttk.Checkbutton(reconnect, variable=self.auto_reconnect_var,
+                                                  command=self._apply_controls)
+        self.chk_auto_reconnect.pack(side="left", padx=(0, 14))
+        self.reconnect_widgets: list[tuple[ttk.Label, ttk.Entry]] = []
+        for var in (self.reconnect_cooldown_var, self.reconnect_wait_var, self.max_reconnects_var):
+            label = ttk.Label(reconnect)
+            label.pack(side="left", padx=(0, 4))
+            entry = ttk.Entry(reconnect, textvariable=var, width=6)
+            entry.pack(side="left", padx=(0, 14))
+            self.reconnect_widgets.append((label, entry))
+
         self.dash_group = ttk.LabelFrame(frame, padding=10)
         self.dash_group.grid(row=2, column=0, sticky="ew", pady=(0, 8))
         self.dash_group.columnconfigure(1, weight=1)
@@ -296,13 +328,15 @@ class DataRescueApp:
         self.lbl_speed.grid(row=0, column=0, sticky="w", padx=(0, 16))
         self.lbl_eta = ttk.Label(metrics, font=("System", 11))
         self.lbl_eta.grid(row=0, column=1, sticky="w", padx=(0, 16))
-        self.lbl_current = ttk.Label(metrics, font=("System", 10), foreground="#444444")
+        self.lbl_current = ttk.Label(metrics, font=("System", 10), foreground=self.colors["muted"])
         self.lbl_current.grid(row=0, column=2, sticky="ew")
+        self.lbl_storage = ttk.Label(metrics, font=("System", 10, "bold"), foreground=self.colors["orange"])
+        self.lbl_storage.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
         badges = ttk.Frame(self.dash_group)
         badges.grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
         self.badges: dict[str, ttk.Label] = {}
         for key, color in BADGES:
-            badge = ttk.Label(badges, font=("System", 10, "bold"), foreground=color, padding=(6, 2),
+            badge = ttk.Label(badges, font=("System", 10, "bold"), foreground=self.colors[color], padding=(6, 2),
                               relief="groove")
             badge.pack(side="left", padx=3)
             self.badges[key] = badge
@@ -463,6 +497,10 @@ class DataRescueApp:
         self.chk_caffeinate.configure(text=t("caffeinate"))
         for (label, _entry), key in zip(self.option_widgets, ("per_file_timeout", "scan_budget", "limit_optional")):
             label.configure(text=t(key))
+        self.chk_auto_reconnect.configure(text=t("auto_reconnect"))
+        for (label, _entry), key in zip(self.reconnect_widgets,
+                                        ("reconnect_cooldown", "reconnect_wait", "max_reconnects")):
+            label.configure(text=t(key))
         self.dash_group.configure(text=t("telemetry_title"))
         self.lbl_bytes_title.configure(text=t("data_volume"))
         self.lbl_files_title.configure(text=t("file_count"))
@@ -545,6 +583,8 @@ class DataRescueApp:
         if unresponsive != self._unresponsive_s:
             self._unresponsive_s = unresponsive
             self._render_health()
+        if self.state is OpState.WAITING:
+            self._render_state()  # live countdown, even while a manifest read hangs
         self.root.after(POLL_MS, self._poll)
 
     def _submit(self, function: Callable[[], Any], callback: Callable[[TaskDone], None]) -> None:
@@ -558,10 +598,10 @@ class DataRescueApp:
 
     def _render_state(self) -> None:
         state_info = info(self.state)
-        self.state_badge.configure(text=self._t(state_info.badge_key), foreground=state_info.color)
+        self.state_badge.configure(text=self._t(state_info.badge_key), foreground=self.colors[state_info.color])
         message = self._banner_text()
         if message:
-            self.banner_label.configure(text=message, foreground=state_info.color)
+            self.banner_label.configure(text=message, foreground=self.colors[state_info.color])
             self.banner.grid()
         else:
             self.banner.grid_remove()
@@ -569,6 +609,7 @@ class DataRescueApp:
             self.btn_resume.grid()
         else:
             self.btn_resume.grid_remove()
+        self.btn_stop.configure(text=self._t("btn_stop_waiting" if self.state is OpState.WAITING else "btn_stop"))
         self._apply_controls()
 
     def _banner_text(self) -> str:
@@ -583,6 +624,12 @@ class DataRescueApp:
             command = spec.subcommand if spec is not None else "?"
             code = finish.returncode if finish.returncode is not None else finish.error
             return self._t("msg_failed", command=command, code=code)
+        if self.state is OpState.WAITING:
+            activity = (self.snapshot.activity if self.snapshot is not None else None) or {}
+            return format_waiting(wait_view(activity, datetime.now(timezone.utc)), self.lang,
+                                  stoppable=self._own_run)
+        if self.state is OpState.PAUSED_STORAGE and self._escalation_pending():
+            key = "msg_storage_escalation"
         text = self._t(key)
         if self.state is OpState.PAUSED_STORAGE and self.snapshot is not None:
             reason = telemetry_from(self.snapshot).pause_reason
@@ -595,7 +642,7 @@ class DataRescueApp:
         self.lbl_health.configure(text=text)
 
     def _apply_controls(self) -> None:
-        c = control_states(self.state, job_loaded=self.job_dir is not None)
+        c = self._controls()
         loading = self._loading is not None
         fields = c["job_fields"] and not loading
         for name, (_label, entry, button, _hint) in self.path_widgets.items():
@@ -612,6 +659,9 @@ class DataRescueApp:
         for _label, entry in self.option_widgets:
             set_enabled(entry, c["options"])
         set_enabled(self.chk_caffeinate, c["options"])
+        set_enabled(self.chk_auto_reconnect, c["options"])
+        for _label, entry in self.reconnect_widgets:
+            set_enabled(entry, c["options"] and bool(self.auto_reconnect_var.get()))
         set_enabled(self.btn_scan, c["scan"])
         set_enabled(self.btn_copy, c["copy"])
         set_enabled(self.btn_verify, c["verify"])
@@ -630,6 +680,9 @@ class DataRescueApp:
         else:
             self.lbl_job_loaded.grid_remove()
 
+    def _controls(self) -> dict[str, bool]:
+        return control_states(self.state, job_loaded=self.job_dir is not None, own_child=self._own_run)
+
     # ------------------------------------------------------------ job loading
 
     def _open_job(self, job_dir: Path, *, quiet: bool = False) -> None:
@@ -640,7 +693,7 @@ class DataRescueApp:
         self._apply_controls()
 
     def close_job(self) -> None:
-        if not info(self.state).busy:
+        if self._controls()["close_job"]:
             self._reset_job()
 
     def _reset_job(self) -> None:
@@ -681,9 +734,13 @@ class DataRescueApp:
             return
         self._last_read_error = None
         self.snapshot = result.snapshot
-        new_state = reconcile_with_activity(self.state, (result.snapshot.activity or {}).get("state"))
-        if new_state is not self.state:
-            self._set_state(new_state)
+        # a read that started before the last command finished must not undo its final state
+        stale = self._finished_at is not None and result.requested_at < self._finished_at
+        if not stale:
+            new_state = reconcile_with_activity(self.state, (result.snapshot.activity or {}).get("state"),
+                                                child_running=self._own_run)
+            if new_state is not self.state:
+                self._set_state(new_state)
         self._render_snapshot()
 
     def _apply_job_fields(self, snapshot: JobSnapshot) -> None:
@@ -705,7 +762,7 @@ class DataRescueApp:
         self._render_guide()
         self._render_failed_rows()
         self._render_phase()
-        if self.state is OpState.PAUSED_STORAGE:
+        if self.state in (OpState.PAUSED_STORAGE, OpState.WAITING):
             self._render_state()
 
     def _render_telemetry(self) -> None:
@@ -720,6 +777,7 @@ class DataRescueApp:
             self.lbl_speed.configure(text=t("speed", rate=format_rate(0)))
             self.lbl_eta.configure(text=t("eta", eta=t("eta_unknown")))
             self.lbl_current.configure(text=t("current_file", file="—"))
+            self.lbl_storage.configure(text="")
             return
         view = telemetry_from(self.snapshot)
         for key, badge in self.badges.items():
@@ -731,14 +789,15 @@ class DataRescueApp:
             self.prog_bytes.configure(value=0)
             self.lbl_bytes.configure(text="—")
         else:
-            total = view.transferred_bytes + view.remaining_bytes
             self.prog_bytes.configure(value=fraction)
             self.lbl_bytes.configure(
-                text=f"{format_size(view.transferred_bytes)} / {format_size(total)} ({fraction * 100:.1f}%)")
+                text=f"{format_size(view.rescued_bytes)} / {format_size(view.total_bytes)} ({fraction * 100:.1f}%)")
         self.lbl_speed.configure(text=t("speed", rate=format_rate(view.rate_bytes_s)))
         self.lbl_eta.configure(text=t("eta", eta=format_eta(view.eta_seconds, self.lang)))
         current = f"{view.current_path} ({format_size(view.current_bytes)})" if view.current_path else "—"
         self.lbl_current.configure(text=t("current_file", file=current))
+        self.lbl_storage.configure(text=t("storage_events_summary", losses=view.storage_losses,
+                                          reconnects=view.reconnects) if view.storage_losses else "")
 
     def _guide_action(self) -> GuideAction:
         if self.snapshot is None or self.job_dir is None:
@@ -747,16 +806,19 @@ class DataRescueApp:
 
     def _render_guide(self) -> None:
         if self.snapshot is None:
-            self.guide_label.configure(text=self._t("guide_default"))
+            self._set_guide_text(self._t("guide_default"))
             self.btn_guide.configure(text=self._t("btn_guide_none"))
             self._apply_controls()
             return
         lines = [line.strip().replace("uv run macos-data-rescue ", "")
                  for line in self.snapshot.guide_text.splitlines()[1:] if line.strip()]
-        self.guide_label.configure(text="\n".join(lines))
+        self._set_guide_text("\n".join(lines))
         action = self._guide_action()
         if action.kind == "run":
             label = self._t("btn_guide_run",
+                            command=" ".join([action.spec.subcommand, *self._phase_args(action.spec)]))
+        elif action.kind == "acknowledge":
+            label = self._t("btn_guide_acknowledge",
                             command=" ".join([action.spec.subcommand, *self._phase_args(action.spec)]))
         elif action.kind == "approve":
             label = self._t("btn_guide_approve", phase=action.phase)
@@ -764,6 +826,14 @@ class DataRescueApp:
             label = self._t("btn_guide_none")
         self.btn_guide.configure(text=label)
         self._apply_controls()
+
+    def _set_guide_text(self, text: str) -> None:
+        if self.guide_text.get("1.0", "end-1c") == text:
+            return  # keep the operator's scroll position across polls
+        self.guide_text.configure(state="normal")
+        self.guide_text.delete("1.0", "end")
+        self.guide_text.insert("1.0", text)
+        self.guide_text.configure(state="disabled")
 
     @staticmethod
     def _phase_args(spec: CommandSpec) -> list[str]:
@@ -807,7 +877,7 @@ class DataRescueApp:
             self.preflight_summary_label.configure(text=self._t("preflight_none"), foreground="")
             return
         key, values = self._preflight_summary
-        color = {"preflight_fail": LEVEL_COLORS["fail"], "preflight_ok": LEVEL_COLORS["ok"]}.get(key, "")
+        color = {"preflight_fail": self.colors["red"], "preflight_ok": self.colors["green"]}.get(key, "")
         self.preflight_summary_label.configure(text=self._t(key, **values), foreground=color)
 
     def _log(self, text: str, tag: str = "stdout") -> None:
@@ -841,6 +911,7 @@ class DataRescueApp:
             self.last_copy_spec = copies[-1]
         self._on_success = on_success
         self._last_finish = None
+        self._own_run = True
         self._set_state(OpState.RUNNING)
         return True
 
@@ -870,6 +941,8 @@ class DataRescueApp:
         state = state_after_exit(event.returncode, stop_requested=event.stop_requested, error=bool(event.error))
         if event.error:
             self._log(self._t("log_runner_error", error=event.error) + "\n", "error")
+        elif state is OpState.PAUSED_STORAGE and event.stop_requested:
+            self._log(self._t("log_stopped_waiting") + "\n", "warn")
         elif state is OpState.PAUSED_STORAGE:
             self._log(self._t("log_paused_storage") + "\n", "warn")
         elif state is OpState.STOPPED:
@@ -885,6 +958,8 @@ class DataRescueApp:
             self.notebook.select(self.tab_setup)
         on_success, self._on_success = self._on_success, None
         self._last_finish = event
+        self._finished_at = self.monitor.now()
+        self._own_run = False
         self._set_state(state)
         if event.completed_all and on_success is not None:
             on_success()
@@ -894,14 +969,16 @@ class DataRescueApp:
             self._destroy()
 
     def stop_current_operation(self) -> None:
-        if self.state is not OpState.RUNNING:
+        """Stop (or "Stop waiting"): the same graceful SIGINT to the child's process group."""
+        if self.state not in STOPPABLE or not self._own_run:
             return
-        if messagebox.askyesno(self._t("confirm_stop_title"), self._t("confirm_stop_msg")):
+        message = "confirm_stop_waiting_msg" if self.state is OpState.WAITING else "confirm_stop_msg"
+        if messagebox.askyesno(self._t("confirm_stop_title"), self._t(message)):
             if self.runner.request_stop():
                 self._set_state(OpState.STOPPING)
 
     def _on_close(self) -> None:
-        if self.state is OpState.RUNNING:
+        if self.state in STOPPABLE and self._own_run:
             if not messagebox.askyesno(self._t("confirm_close_title"), self._t("confirm_close_msg")):
                 return
             self._close_requested = True
@@ -938,6 +1015,54 @@ class DataRescueApp:
         except ValueError:
             messagebox.showerror(self._t("err_title"), self._t("err_invalid_limit", field=self._t("field_limit")))
             return False, None
+
+    def _reconnect_options(self) -> tuple[bool, cmd.ReconnectOptions | None]:
+        """The auto-reconnect choice; (False, None) after an invalid value was reported."""
+        if not self.auto_reconnect_var.get():
+            return True, None
+        fields = ((self.reconnect_cooldown_var, cmd.parse_non_negative_float, "err_invalid_non_negative",
+                   "field_reconnect_cooldown"),
+                  (self.reconnect_wait_var, cmd.parse_positive_float, "err_invalid_number", "field_reconnect_wait"),
+                  (self.max_reconnects_var, cmd.parse_positive_int, "err_invalid_count", "field_max_reconnects"))
+        values = []
+        for var, parse, error_key, field_key in fields:
+            try:
+                values.append(parse(var.get()))
+            except ValueError:
+                messagebox.showerror(self._t("err_title"), self._t(error_key, field=self._t(field_key)))
+                return False, None
+        return True, cmd.ReconnectOptions(*values)
+
+    def _storage_blocked(self) -> bool:
+        return self.snapshot is not None and self.snapshot.storage_blocked
+
+    def _escalation_pending(self) -> bool:
+        """The paused copy ended with a reconnect give-up (``next``: storage-escalation)."""
+        return self._storage_blocked() and (self.snapshot.activity or {}).get("state") == "paused"
+
+    def _start_copy_spec(self, spec: CommandSpec, *, escalation: bool = False) -> None:
+        """Start a copy/resume after a fresh preflight.
+
+        Re-enabling auto-reconnect after a give-up is the operator's decision:
+        ``--acknowledge-storage-loss`` is only ever added after this confirmation.
+        While the escalation is pending, continuing without auto-reconnect is
+        confirmed as well.
+        """
+        if self.job_dir is None:
+            return
+        escalation = escalation or self._escalation_pending()
+        if cmd.needs_storage_acknowledgement(spec, blocked=self._storage_blocked(), escalation=escalation):
+            if not self._ask_warning("confirm_ack_title", "confirm_ack_msg"):
+                return
+            spec = cmd.with_acknowledgement(spec)
+        elif escalation and spec.subcommand in cmd.COPY_COMMANDS:
+            if not self._ask_warning("confirm_ack_title", "confirm_continue_msg"):
+                return
+        self._start(cmd.with_preflight(spec, self.job_dir))
+
+    def _ask_warning(self, title_key: str, message_key: str) -> bool:
+        return bool(messagebox.askyesno(self._t(title_key), self._t(message_key),
+                                        icon=messagebox.WARNING, default=messagebox.NO))
 
     def _browse_source(self) -> None:
         path = filedialog.askdirectory(title=self._t("select_source_title"))
@@ -1030,25 +1155,33 @@ class DataRescueApp:
         if self.job_dir is None:
             return
         timeout = self._file_timeout()
+        if timeout is None:
+            return
         ok, limit = self._limit()
-        if timeout is not None and ok:
-            spec = cmd.copy_spec(self.job_dir, self.phase_var.get(), timeout, limit)
-            self._start(cmd.with_preflight(spec, self.job_dir))
+        if not ok:
+            return
+        ok, reconnect = self._reconnect_options()
+        if ok:
+            self._start_copy_spec(cmd.copy_spec(self.job_dir, self.phase_var.get(), timeout, limit,
+                                                reconnect=reconnect))
 
     def resume_paused(self) -> None:
         if self.job_dir is None:
             return
+        ok, reconnect = self._reconnect_options()
+        if not ok:
+            return
         last = self.last_copy_spec
         if last is not None and last.option("--job-dir") == str(self.job_dir):
-            spec = cmd.resume_from(last)
+            spec = cmd.with_reconnect(cmd.resume_from(last), reconnect)
         else:
             timeout = self._file_timeout()
             if timeout is None:
                 return
             activity = (self.snapshot.activity if self.snapshot is not None else None) or {}
             phase = activity.get("phase") or self.phase_var.get()
-            spec = cmd.copy_spec(self.job_dir, phase, timeout, command="resume")
-        self._start(cmd.with_preflight(spec, self.job_dir))
+            spec = cmd.copy_spec(self.job_dir, phase, timeout, command="resume", reconnect=reconnect)
+        self._start_copy_spec(spec)
 
     def start_verify(self) -> None:
         if self.job_dir is None:
@@ -1064,8 +1197,15 @@ class DataRescueApp:
         if action.kind == "approve" and action.phase:
             # consent is never recorded by the guide; the operator must confirm a name
             self.approve_phase_dialog(action.phase)
-        elif action.kind == "run" and action.spec is not None:
-            self._start(cmd.with_preflight(action.spec, self.job_dir))
+        elif action.kind in ("run", "acknowledge") and action.spec is not None:
+            if action.spec.subcommand not in cmd.COPY_COMMANDS:
+                self._start(cmd.with_preflight(action.spec, self.job_dir))
+                return
+            ok, reconnect = self._reconnect_options()
+            if ok:
+                # the checkbox decides; an "acknowledge" step always asks before re-enabling the loop
+                self._start_copy_spec(cmd.with_reconnect(action.spec, reconnect),
+                                      escalation=action.kind == "acknowledge")
         elif self.snapshot is not None:
             messagebox.showinfo(self._t("info_title"), self.snapshot.guide_text)
 
@@ -1118,6 +1258,7 @@ class DataRescueApp:
         message = self._t("confirm_fallback_msg", path=failed, candidate=candidate["path"],
                           evidence=", ".join(candidate.get("evidence", [])))
         if messagebox.askyesno(self._t("confirm_fallback_title"), message):
+            # a single-file recovery never auto-reconnects (the CLI refuses --path with it)
             spec = cmd.copy_spec(self.job_dir, "all", timeout, path=failed, fallback_from=candidate["path"])
             self._start(cmd.with_preflight(spec, self.job_dir))
 

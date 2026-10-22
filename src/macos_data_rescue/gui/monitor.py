@@ -22,6 +22,7 @@ from typing import Any
 from ..activity import activity_snapshot
 from ..guide import next_text
 from ..manifest import GATED_PHASES, UNREADABLE_COMPRESSED, connect, load_approval, load_config, status_summary
+from ..storage_events import blocked_by_give_up, list_events
 
 LOG = logging.getLogger(__name__)
 
@@ -41,6 +42,13 @@ class JobSnapshot:
     guide_text: str
     approvals: dict[str, str | None]
     failed_rows: tuple[tuple[str, str, int], ...]
+    # storage_events summary: disconnects, successful automatic reconnects, and
+    # whether a reconnect give-up still waits for the operator's acknowledgement
+    storage_losses: int = 0
+    reconnects: int = 0
+    storage_blocked: bool = False
+    # manifest bytes per status (copied rows count their copied bytes)
+    byte_counts: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -48,6 +56,9 @@ class SnapshotResult:
     job_dir: Path
     snapshot: JobSnapshot | None
     error: str | None = None
+    # monitor clock when the read started: a read that began before a command
+    # finished may describe the job as it was while the command still ran
+    requested_at: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -69,6 +80,8 @@ def read_job_snapshot(job_dir: Path) -> JobSnapshot:
             "order by relative_path limit ?",
             (*FAILED_STATUSES, FAILED_ROW_LIMIT),
         ).fetchall()
+        events = list_events(conn)
+        storage_blocked = blocked_by_give_up(conn)
     finally:
         conn.close()
     return JobSnapshot(
@@ -82,6 +95,10 @@ def read_job_snapshot(job_dir: Path) -> JobSnapshot:
         guide_text=next_text(job_dir),
         approvals={phase: load_approval(job_dir, phase) for phase in GATED_PHASES},
         failed_rows=tuple((row["relative_path"], row["status"], int(row["size"] or 0)) for row in rows),
+        storage_losses=sum(1 for event in events if event["kind"] == "lost"),
+        reconnects=sum(1 for event in events if event["kind"] == "resumed"),
+        storage_blocked=storage_blocked,
+        byte_counts={status: item["bytes"] for status, item in summary.items()},
     )
 
 
@@ -99,20 +116,23 @@ class JobMonitor:
         with self._lock:
             if self._started is not None:
                 return False
-            self._started = self._clock()
-        threading.Thread(target=self._read, args=(job_dir,), name="job-monitor", daemon=True).start()
+            started = self._started = self._clock()
+        threading.Thread(target=self._read, args=(job_dir, started), name="job-monitor", daemon=True).start()
         return True
+
+    def now(self) -> float:
+        return self._clock()
 
     def stalled_for(self) -> float:
         """Seconds the in-flight read has been running (0 when idle)."""
         with self._lock:
             return 0.0 if self._started is None else self._clock() - self._started
 
-    def _read(self, job_dir: Path) -> None:
+    def _read(self, job_dir: Path, started: float) -> None:
         try:
-            result = SnapshotResult(job_dir, self._reader(job_dir))
+            result = SnapshotResult(job_dir, self._reader(job_dir), requested_at=started)
         except Exception as exc:
-            result = SnapshotResult(job_dir, None, f"{type(exc).__name__}: {exc}")
+            result = SnapshotResult(job_dir, None, f"{type(exc).__name__}: {exc}", requested_at=started)
         finally:
             with self._lock:
                 self._started = None
@@ -153,11 +173,16 @@ class Telemetry:
     transferred_bytes: int = 0
     remaining_bytes: int = 0
     pause_reason: str | None = None
+    storage_losses: int = 0
+    reconnects: int = 0
+    # whole-manifest progress, consistent with the file counter; the activity's
+    # transferred/remaining bytes only describe the current copy invocation
+    rescued_bytes: int = 0
+    total_bytes: int = 0
 
     @property
     def bytes_fraction(self) -> float | None:
-        total = self.transferred_bytes + self.remaining_bytes
-        return self.transferred_bytes / total if total > 0 else None
+        return self.rescued_bytes / self.total_bytes if self.total_bytes > 0 else None
 
 
 BADGE_STATUSES: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -188,4 +213,8 @@ def telemetry_from(snapshot: JobSnapshot) -> Telemetry:
         transferred_bytes=int(activity.get("transferred_bytes") or 0),
         remaining_bytes=int(activity.get("remaining_bytes") or 0),
         pause_reason=activity.get("reason") if activity.get("state") == "paused" else None,
+        storage_losses=snapshot.storage_losses,
+        reconnects=snapshot.reconnects,
+        rescued_bytes=sum(snapshot.byte_counts.get(status, 0) for status in ("copied", "copied_from_fallback")),
+        total_bytes=sum(snapshot.byte_counts.values()),
     )

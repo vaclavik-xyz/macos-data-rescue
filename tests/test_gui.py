@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from helpers import ROOT, init_and_scan, write_file
+from helpers import ROOT, init_and_scan, run_cli, write_file
 from macos_data_rescue.cli import build_parser
 from macos_data_rescue.gui.commands import CommandSpec
 from macos_data_rescue.gui.i18n import MESSAGES, PHASE_DESCRIPTIONS, HOME_PHASES, format_eta, format_rate, tr
@@ -64,6 +64,9 @@ def test_translations_are_complete() -> None:
         used |= set(re.findall(r'\bt\(\s*"([a-z_]+)"', text))
         used |= set(re.findall(r'RunnerNotice\("\w+", "([a-z_]+)"', text))
         used |= set(re.findall(r'"(log_stop_[a-z]+)"', text))
+        used |= set(re.findall(r'\btr\(\s*"([a-z_]+)"', text))
+        # keys kept in tuples and passed on (labels, validation errors, dialogs)
+        used |= set(re.findall(r'"((?:err|field|confirm|msg|log|state|btn|reconnect|max)_[a-z_]+)"', text))
     used |= {item.badge_key for item in STATE_INFO.values()}
     used |= {item.message_key for item in STATE_INFO.values() if item.message_key}
     missing = sorted(key for key in used if key not in MESSAGES["cs"])
@@ -229,8 +232,56 @@ def test_storage_pause_offers_resume_with_same_options(root, dialogs, tmp_path: 
     started: list = []
     app.runner.start = lambda steps, keep_awake=False: started.append(list(steps))
     app.resume_paused()
+    # auto-reconnect is on by default in the console; unchanged limits are not passed
     assert started == [[CommandSpec(("preflight", "--job-dir", str(job_dir))),
-                        CommandSpec(("resume", *copy.args[1:]))]]
+                        CommandSpec(("resume", *copy.args[1:], "--auto-reconnect"))]]
+    app._set_state(OpState.PAUSED_STORAGE)
+    app.auto_reconnect_var.set(False)
+    app.resume_paused()
+    assert started[1][1] == CommandSpec(("resume", *copy.args[1:]))
+    app._set_state(OpState.PAUSED_STORAGE)
+    app.auto_reconnect_var.set(True)
+    app.reconnect_cooldown_var.set("-1")
+    app.resume_paused()
+    assert len(started) == 2 and dialogs[-1][0] == "showerror"
+    assert not [c for c in dialogs if c[0] == "askyesno"], "no acknowledgement after a plain pause"
+
+
+def test_give_up_requires_confirmation_before_acknowledging(root, dialogs, tmp_path: Path, monkeypatch) -> None:
+    from test_auto_reconnect import seed_identities
+
+    write_file(tmp_path / "source-home" / "a", b"hello")
+    job_dir, source, _ = init_and_scan(tmp_path)
+    seed_identities(job_dir, source_uuid=None, dest_uuid=None)
+    source.rename(source.with_name("gone"))
+    gave_up = run_cli("copy", "--job-dir", str(job_dir), "--auto-reconnect", "--reconnect-cooldown", "0",
+                      "--reconnect-wait", "0.1", check=False)
+    assert gave_up.returncode == 3
+    app = make_app(root, initial_job_dir=job_dir, lang="cs")
+    pump(root, lambda: app.state is OpState.PAUSED_STORAGE and app.snapshot.storage_blocked)
+    assert app._guide_action().kind == "acknowledge"
+    assert app.btn_guide.cget("text").startswith("Pokračovat po potvrzení: resume")
+
+    started: list = []
+    app.runner.start = lambda steps, keep_awake=False: started.append(list(steps))
+    answers = iter([False, True, False, True])
+    asked: list = []
+    monkeypatch.setattr("tkinter.messagebox.askyesno",
+                        lambda title, message, **kw: asked.append(message) or next(answers))
+    app.resume_paused()
+    assert started == [] and "ddrescue" in asked[-1]
+    app.resume_paused()
+    assert started[-1][1].args[-2:] == ("--auto-reconnect", "--acknowledge-storage-loss")
+    # the recommended step never passes the flag silently
+    app._set_state(OpState.PAUSED_STORAGE)
+    app.execute_recommended_step()
+    assert len(started) == 1 and len(asked) == 3
+    # continuing without auto-reconnect is confirmed too, but never acknowledges
+    app.auto_reconnect_var.set(False)
+    app.execute_recommended_step()
+    assert len(started) == 2 and len(asked) == 4 and "bez automatického obnovení" in asked[-1]
+    assert "--acknowledge-storage-loss" not in started[-1][1].args
+    assert "--auto-reconnect" not in started[-1][1].args
 
 
 def test_opening_paused_job_shows_storage_pause(root, dialogs, tmp_path: Path) -> None:
@@ -295,16 +346,59 @@ def test_stop_is_graceful_and_keeps_controls_locked(root, dialogs, tmp_path: Pat
     source = tmp_path / "home"
     write_file(source / "Desktop" / "a.txt", b"a")
     job_dir, _, _ = init_and_scan(tmp_path, source)
-    sleeper = [sys.executable, "-c", "import time\ntry:\n    time.sleep(60)\nexcept KeyboardInterrupt:\n    raise SystemExit(130)"]
+    # "ready" is printed inside the try block: a SIGINT before that would kill the
+    # interpreter during startup (exit -2) instead of reaching the handler
+    sleeper = [sys.executable, "-c", "import time\ntry:\n    print('ready', flush=True)\n    time.sleep(60)\n"
+                                     "except KeyboardInterrupt:\n    raise SystemExit(130)"]
     app = make_app(root, initial_job_dir=job_dir, lang="cs", runner_factory=lambda events: CommandRunner(
         events, command=lambda spec: sleeper, keep_awake_factory=NoKeepAwake))
     pump(root, lambda: app.snapshot is not None)
     assert app.btn_stop.cget("text") == "Zastavit"
     app._start([CommandSpec(("copy", "--job-dir", str(job_dir)))])
-    pump(root, lambda: app.runner._proc is not None)
+    pump(root, lambda: "ready" in app.log_text.get("1.0", "end"))
     app.stop_current_operation()
     assert app.state is OpState.STOPPING
     assert disabled(app.btn_stop) and disabled(app.btn_copy) and disabled(app.btn_open_job)
     finish(app, root, OpState.STOPPED)
     assert app._last_finish.returncode == 130
     assert not disabled(app.btn_copy)
+
+
+def test_waiting_for_disk_state_and_stop_waiting(root, dialogs, tmp_path: Path) -> None:
+    from test_auto_reconnect import seed_identities
+
+    for name in ("a", "b"):
+        write_file(tmp_path / "source-home" / name, b"hello")
+    job_dir, source, _ = init_and_scan(tmp_path)
+    seed_identities(job_dir, source_uuid=None, dest_uuid=None)
+    app = make_app(root, initial_job_dir=job_dir, lang="cs")
+    pump(root, lambda: app.snapshot is not None)
+    app.reconnect_cooldown_var.set("60")
+    ok, reconnect = app._reconnect_options()
+    assert ok and reconnect.args() == ("--auto-reconnect", "--reconnect-cooldown", "60")
+    # the disk drops before the copy reaches it; preflight would stop a real start here
+    source.rename(source.with_name("unplugged"))
+    app._start([cmd_copy(job_dir, reconnect)])
+    pump(root, lambda: app.state is OpState.WAITING)
+    assert app.state_badge.cget("text") == "ČEKÁ NA DISK"
+    banner = app.banner_label.cget("text")
+    assert "Chladnutí disku: zbývá" in banner and "(pokus 1)" in banner
+    assert app.btn_stop.cget("text") == "Zastavit čekání" and not disabled(app.btn_stop)
+    assert disabled(app.btn_copy) and disabled(app.btn_guide) and disabled(app.chk_auto_reconnect)
+    assert app.lbl_storage.cget("text") == "Odpojení disku: 1 · automaticky obnoveno: 0"
+
+    app.stop_current_operation()
+    assert app.state is OpState.STOPPING
+    finish(app, root, OpState.PAUSED_STORAGE)
+    assert app._last_finish.returncode == 3 and app._last_finish.stop_requested
+    assert "znovu připojte původní disk" in app.banner_label.cget("text"), "a plain stop is no escalation"
+    assert [c[0] for c in dialogs] == ["askyesno"], "only the stop confirmation, no acknowledgement"
+    assert "Zastavit čekání na disk?" in dialogs[0][1][1]
+    pump(root, lambda: app.snapshot is not None and app.snapshot.activity.get("state") == "paused")
+    assert app.state is OpState.PAUSED_STORAGE and not app.snapshot.storage_blocked
+
+
+def cmd_copy(job_dir: Path, reconnect):
+    from macos_data_rescue.gui.commands import copy_spec
+
+    return copy_spec(job_dir, "all", 30.0, reconnect=reconnect)

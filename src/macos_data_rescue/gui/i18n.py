@@ -56,6 +56,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "guide_default": "Otevřete nebo založte úlohu.",
         "btn_guide_run": "Spustit: {command}",
         "btn_guide_approve": "Zaznamenat souhlas: {phase}…",
+        "btn_guide_acknowledge": "Pokračovat po potvrzení: {command}…",
         "btn_guide_none": "Není co spustit",
         "control_title": "Fáze záchrany",
         "select_phase": "Fáze:",
@@ -65,6 +66,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "btn_scan": "1. Skenovat",
         "btn_copy": "2. Kopírovat",
         "btn_stop": "Zastavit",
+        "btn_stop_waiting": "Zastavit čekání",
         "btn_resume": "Pokračovat (resume)",
         "caffeinate": "Nedovolit Macu usnout během operace (caffeinate)",
         "per_file_timeout": "Timeout na soubor (s):",
@@ -73,6 +75,13 @@ MESSAGES: dict[str, dict[str, str]] = {
         "field_file_timeout": "Timeout na soubor",
         "field_scan_budget": "Časový limit skenu",
         "field_limit": "Limit souborů",
+        "auto_reconnect": "Automaticky obnovit po odpojení disku",
+        "reconnect_cooldown": "Chladnutí (s):",
+        "reconnect_wait": "Čekání na disk (s):",
+        "max_reconnects": "Max. obnovení:",
+        "field_reconnect_cooldown": "Chladnutí",
+        "field_reconnect_wait": "Čekání na disk",
+        "field_max_reconnects": "Max. obnovení",
         "telemetry_title": "Průběh",
         "data_volume": "Data:",
         "file_count": "Soubory:",
@@ -91,6 +100,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "clear_log": "Vymazat záznam",
         "state_idle": "PŘIPRAVENO",
         "state_running": "PROBÍHÁ",
+        "state_waiting": "ČEKÁ NA DISK",
         "state_stopping": "ZASTAVUJI…",
         "state_stopped": "ZASTAVENO",
         "state_paused_storage": "POZASTAVENO – ÚLOŽIŠTĚ",
@@ -102,6 +112,17 @@ MESSAGES: dict[str, dict[str, str]] = {
         "msg_paused_storage": "Úložiště není dostupné — znovu připojte původní disk (případně uvolněte místo "
                               "na cílovém disku) a pak pokračujte tlačítkem Pokračovat.",
         "msg_pause_reason": "Důvod: {reason}",
+        "msg_waiting": "Disk se odpojil — automatické obnovení čeká na jeho návrat. Nic dalšího nespouštějte.",
+        "msg_waiting_cooldown": "Chladnutí disku: zbývá {remaining} (pokus {attempt}). Na disk se teď nesahá.",
+        "msg_waiting_wait": "Čekám na návrat disku: nejdéle ještě {remaining} (pokus {attempt}). "
+                            "Pokud se nevrátí sám, připojte ho znovu.",
+        "msg_waiting_stop_hint": "„Zastavit čekání“ běh čistě ukončí; později pokračujte tlačítkem Pokračovat.",
+        "msg_waiting_external": "Čeká jiný proces (např. v Terminálu); tato konzole ho nemůže zastavit.",
+        "msg_storage_escalation": "Automatické obnovení to vzdalo — disk se opakovaně odpojoval, nepřibývala "
+                                  "nová data nebo se nevrátil. Doporučení: ukončete kopírování po souborech a "
+                                  "pořiďte image disku nástrojem ddrescue s mapfile, případně disk předejte do "
+                                  "datové laboratoře.",
+        "storage_events_summary": "Odpojení disku: {losses} · automaticky obnoveno: {reconnects}",
         "msg_failed": "Příkaz „{command}“ skončil chybou (kód {code}). Podrobnosti jsou v záznamu činnosti.",
         "msg_preflight_failed": "Kontrola prostředí selhala, operace nebyla spuštěna. Výsledek je na kartě Příprava.",
         "msg_job_unresponsive": "Pracovní složka neodpovídá už {seconds} s — zkontrolujte záchranný disk.",
@@ -115,6 +136,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "log_finished_code": "✗ Skončilo s kódem {code}.",
         "log_paused_storage": "⏸ Kopírování pozastaveno: úložiště není dostupné (kód 3).",
         "log_stopped": "■ Zastaveno obsluhou.",
+        "log_stopped_waiting": "■ Čekání na disk zastaveno obsluhou (kód 3); pokračujte tlačítkem Pokračovat.",
         "log_runner_error": "✗ Chyba spouštění: {error}",
         "log_job_read_error": "Nelze načíst úlohu: {error}",
         "verify_title": "Ověření integrity cíle (SHA256)",
@@ -149,6 +171,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "info_title": "Informace",
         "confirm_stop_title": "Zastavit operaci",
         "confirm_stop_msg": "Zastavit probíhající operaci?\n\nZapsaný stav v manifestu zůstane a lze na něj navázat.",
+        "confirm_stop_waiting_msg": "Zastavit čekání na disk?\n\nBěh skončí jako pozastavený (kód 3), bez "
+                                    "vzdání automatického obnovení; později pokračujte tlačítkem Pokračovat.",
         "confirm_close_title": "Ukončit aplikaci",
         "confirm_close_msg": "Probíhá operace. Zastavit ji a po jejím ukončení zavřít aplikaci?",
         "confirm_close_stopping_msg": "Proces se stále ukončuje. Zavřít okno hned? "
@@ -168,6 +192,19 @@ MESSAGES: dict[str, dict[str, str]] = {
         "err_paths_required": "Vyplňte zdroj, cíl i pracovní složku.",
         "err_invalid_number": "{field}: zadejte kladné číslo.",
         "err_invalid_limit": "{field}: zadejte kladné celé číslo nebo nechte prázdné.",
+        "err_invalid_non_negative": "{field}: zadejte nulu nebo kladné číslo.",
+        "err_invalid_count": "{field}: zadejte kladné celé číslo.",
+        "confirm_ack_title": "Automatické obnovení to vzdalo",
+        "confirm_ack_msg": "Automatické obnovení po odpojení disku to vzdalo: disk se opakovaně odpojoval, "
+                           "nepřibývala nová data nebo se nevrátil.\n\nDoporučení: ukončete kopírování po souborech "
+                           "a pořiďte image disku nástrojem ddrescue s mapfile, případně disk předejte do datové "
+                           "laboratoře.\n\nPřesto pokračovat a automatické obnovení znovu povolit? Potvrzení se "
+                           "zaznamená do úlohy (--acknowledge-storage-loss).",
+        "confirm_continue_msg": "Automatické obnovení po odpojení disku to vzdalo: disk se opakovaně odpojoval, "
+                                "nepřibývala nová data nebo se nevrátil.\n\nDoporučení: ukončete kopírování po "
+                                "souborech a pořiďte image disku nástrojem ddrescue s mapfile, případně disk "
+                                "předejte do datové laboratoře.\n\nPřesto pokračovat v kopírování po souborech "
+                                "bez automatického obnovení?",
         "err_select_failed": "Vyberte selhaný soubor v levé tabulce.",
         "err_select_both": "Vyberte selhaný soubor i kandidáta.",
         "err_job_load": "Úlohu nelze otevřít:\n{error}",
@@ -220,6 +257,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "guide_default": "Open or create a job.",
         "btn_guide_run": "Run: {command}",
         "btn_guide_approve": "Record consent: {phase}…",
+        "btn_guide_acknowledge": "Continue after confirmation: {command}…",
         "btn_guide_none": "Nothing to run",
         "control_title": "Rescue phases",
         "select_phase": "Phase:",
@@ -229,6 +267,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "btn_scan": "1. Scan",
         "btn_copy": "2. Copy",
         "btn_stop": "Stop",
+        "btn_stop_waiting": "Stop waiting",
         "btn_resume": "Resume",
         "caffeinate": "Keep the Mac awake during operations (caffeinate)",
         "per_file_timeout": "Per-file timeout (s):",
@@ -237,6 +276,13 @@ MESSAGES: dict[str, dict[str, str]] = {
         "field_file_timeout": "Per-file timeout",
         "field_scan_budget": "Scan time budget",
         "field_limit": "File limit",
+        "auto_reconnect": "Automatically reconnect after disk loss",
+        "reconnect_cooldown": "Cooldown (s):",
+        "reconnect_wait": "Wait for disk (s):",
+        "max_reconnects": "Max. reconnects:",
+        "field_reconnect_cooldown": "Cooldown",
+        "field_reconnect_wait": "Wait for disk",
+        "field_max_reconnects": "Max. reconnects",
         "telemetry_title": "Progress",
         "data_volume": "Data:",
         "file_count": "Files:",
@@ -255,6 +301,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "clear_log": "Clear log",
         "state_idle": "READY",
         "state_running": "RUNNING",
+        "state_waiting": "WAITING FOR DISK",
         "state_stopping": "STOPPING…",
         "state_stopped": "STOPPED",
         "state_paused_storage": "PAUSED – STORAGE",
@@ -267,6 +314,16 @@ MESSAGES: dict[str, dict[str, str]] = {
         "msg_paused_storage": "Storage unavailable — reconnect the original disk (or free space on the "
                               "destination), then press Resume.",
         "msg_pause_reason": "Reason: {reason}",
+        "msg_waiting": "The disk disconnected — automatic reconnect is waiting for it. Do not start anything else.",
+        "msg_waiting_cooldown": "Disk cooldown: {remaining} left (attempt {attempt}). Nothing touches the disk now.",
+        "msg_waiting_wait": "Waiting for the disk to come back: at most {remaining} more (attempt {attempt}). "
+                            "Reconnect it if it does not come back on its own.",
+        "msg_waiting_stop_hint": "“Stop waiting” ends the run cleanly; press Resume later to continue.",
+        "msg_waiting_external": "Another process (e.g. in Terminal) is waiting; this console cannot stop it.",
+        "msg_storage_escalation": "Automatic reconnect gave up — the disk kept disconnecting, no new data was "
+                                  "copied, or it did not come back. Recommended: stop file-level copying and "
+                                  "image the disk with ddrescue and a mapfile, or hand it to a data recovery lab.",
+        "storage_events_summary": "Disk disconnections: {losses} · reconnected automatically: {reconnects}",
         "msg_failed": "Command “{command}” failed (exit {code}). See the activity log for details.",
         "msg_preflight_failed": "Preflight failed, so the operation was not started. See the Setup tab.",
         "msg_job_unresponsive": "The job directory has not responded for {seconds} s — check the recovery disk.",
@@ -280,6 +337,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "log_finished_code": "✗ Exited with code {code}.",
         "log_paused_storage": "⏸ Copy paused: storage unavailable (exit 3).",
         "log_stopped": "■ Stopped by operator.",
+        "log_stopped_waiting": "■ Waiting for the disk stopped by operator (exit 3); press Resume to continue.",
         "log_runner_error": "✗ Could not run the command: {error}",
         "log_job_read_error": "Cannot read the job: {error}",
         "verify_title": "Destination integrity (SHA256)",
@@ -315,6 +373,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "info_title": "Information",
         "confirm_stop_title": "Stop operation",
         "confirm_stop_msg": "Stop the running operation?\n\nCommitted progress stays in the manifest and can be resumed.",
+        "confirm_stop_waiting_msg": "Stop waiting for the disk?\n\nThe run ends as paused (exit 3) without an "
+                                    "auto-reconnect give-up; press Resume later to continue.",
         "confirm_close_title": "Quit",
         "confirm_close_msg": "An operation is running. Stop it and close the application once it has exited?",
         "confirm_close_stopping_msg": "The process is still stopping. Close the window now? "
@@ -334,6 +394,18 @@ MESSAGES: dict[str, dict[str, str]] = {
         "err_paths_required": "Source, destination and job directory are all required.",
         "err_invalid_number": "{field}: enter a positive number.",
         "err_invalid_limit": "{field}: enter a positive whole number or leave it empty.",
+        "err_invalid_non_negative": "{field}: enter zero or a positive number.",
+        "err_invalid_count": "{field}: enter a positive whole number.",
+        "confirm_ack_title": "Automatic reconnect gave up",
+        "confirm_ack_msg": "Automatic reconnect after disk loss gave up: the disk kept disconnecting, no new data "
+                           "was copied, or it did not come back.\n\nRecommended: stop file-level copying and image "
+                           "the disk with ddrescue and a mapfile, or hand it to a data recovery lab.\n\n"
+                           "Continue anyway and re-enable automatic reconnect? The acknowledgement is recorded in "
+                           "the job (--acknowledge-storage-loss).",
+        "confirm_continue_msg": "Automatic reconnect after disk loss gave up: the disk kept disconnecting, no new "
+                                "data was copied, or it did not come back.\n\nRecommended: stop file-level copying "
+                                "and image the disk with ddrescue and a mapfile, or hand it to a data recovery "
+                                "lab.\n\nContinue file-level copying anyway, without automatic reconnect?",
         "err_select_failed": "Select a failed file in the left table.",
         "err_select_both": "Select both a failed file and a candidate.",
         "err_job_load": "Cannot open the job:\n{error}",
@@ -370,6 +442,17 @@ def tr(key: str, lang: str = "cs", **kwargs: object) -> str:
     table = MESSAGES.get(lang, MESSAGES["cs"])
     template = table.get(key, MESSAGES["en"].get(key, key))
     return template.format(**kwargs) if kwargs else template
+
+
+def format_waiting(view, lang: str = "cs", *, stoppable: bool = True) -> str:
+    """Banner text for a ``state.WaitView``: phase, live countdown, attempt, reason."""
+    key = "msg_waiting_cooldown" if view.phase == "cooldown" else "msg_waiting_wait"
+    attempt = view.attempt if view.attempt is not None else "?"
+    lines = [tr("msg_waiting", lang), tr(key, lang, remaining=format_eta(view.remaining, lang), attempt=attempt)]
+    if view.reason:
+        lines.append(tr("msg_pause_reason", lang, reason=view.reason))
+    lines.append(tr("msg_waiting_stop_hint" if stoppable else "msg_waiting_external", lang))
+    return "\n".join(lines)
 
 
 def format_rate(rate_bytes_s: float) -> str:

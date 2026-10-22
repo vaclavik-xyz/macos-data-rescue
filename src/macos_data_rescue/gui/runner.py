@@ -7,8 +7,9 @@ GUI can never report idle, or start a second writer, while a child lives.
 
 Each command runs in its own session (process group) so Stop can signal the
 CLI together with its spawned copy/scan workers: SIGINT first (the CLI
-records an interrupted activity and returns rows to a resumable state), then
-SIGTERM, then SIGKILL.
+records an interrupted activity and returns rows to a resumable state, exit
+130; while ``--auto-reconnect`` waits for storage it records ``stopped`` and
+exits 3 instead), then SIGTERM, then SIGKILL.
 """
 from __future__ import annotations
 
