@@ -34,24 +34,62 @@ The goal is simple: **one bad file must not stop the whole rescue**. The tool sc
 - `approve` records the operator/customer decision for a gated phase (`app-data`, `applications`, `full-home`, legacy `library`) with a timestamp and optional `--by` name. `scan` refuses gated phases until approved — including the legacy default no-`--phase` scan, which reaches `~/Library` — and `copy`/`resume` refuse selections containing unapproved gated rows (covers manifests from older versions).
 - `report` prints Markdown or JSON suitable for service notes, including per-file suspected iCloud placeholder warnings.
 - `customer-report` writes an English or Czech customer-facing Markdown/PDF handoff report into the visible recovery root.
+- `gui` (or `macos-data-rescue-gui`) opens a Tk technician console (standard library only, Czech default / English) that drives the same CLI commands with live progress, preflight results, consent dialogs and reports.
 
-## Install / run locally
+## Install
+
+Clone the repository and install dependencies with [uv](https://docs.astral.sh/uv/):
 
 ```bash
 git clone https://github.com/vaclavik-xyz/macos-data-rescue.git
 cd macos-data-rescue
 uv sync
-uv run macos-data-rescue --help
 ```
 
-After the repository is public, you can also install the CLI directly from GitHub:
+After the repository is public, you can also install the tool directly from GitHub:
 
 ```bash
 uv tool install git+https://github.com/vaclavik-xyz/macos-data-rescue.git
 macos-data-rescue --help
+macos-data-rescue-gui --help
 ```
 
-The CLI has no runtime dependencies. Development and security-check tools are isolated to the dev dependency group.
+The application has no runtime dependencies (Python standard library only). Development and security-check tools are isolated in the dev dependency group.
+
+## Technician console (GUI)
+
+On a freshly installed Mac, copy the repository folder to the Mac (for example from a USB drive; `git clone` itself needs the Xcode Command Line Tools) and run:
+
+```bash
+./setup-fresh-mac.sh            # or double-click macos-data-rescue.command in Finder
+```
+
+The script installs a pinned `uv` release into `~/.local/bin` if needed (no sudo, Homebrew or Xcode), runs `uv sync --locked --no-dev` with a uv-managed Python 3.11+ that includes Tk, and opens the console. Grant the Terminal app **Full Disk Access** (System Settings → Privacy & Security → Full Disk Access) so the mounted customer home is readable.
+
+From an existing checkout:
+
+```bash
+uv run macos-data-rescue gui --lang cs          # or: uv run macos-data-rescue-gui
+uv run macos-data-rescue gui --job-dir "/Volumes/RecoverySSD/Customer/.rescue"
+```
+
+The console is a front end for the CLI, so every rule in this README and in [docs/agent-runbook.md](docs/agent-runbook.md) applies; read the runbook before working on real customer data. In addition:
+
+- `preflight` runs before `init` and again before every `scan`, `copy` and `resume`; a failed check stops the operation and is shown on the Setup tab.
+- An opened job shows its source, destination and profile read-only. While an operation runs, everything that could write to the job (init, preflight, consent, phase changes, another scan/copy) is locked.
+- The recommended-step button runs only `scan`, `copy`, `resume`, `verify`, `status`, `report` and `customer-report`. When `next` asks for consent, it opens the consent dialog instead, which requires the approving person's name and an explicit confirmation; consent is never recorded automatically.
+- **Stop** interrupts the running command (SIGINT, then SIGTERM/SIGKILL if it does not exit). Committed progress stays in the manifest; continue with the recommended step. The console stays locked until the process has really exited.
+- Exit code 3 shows *storage unavailable*: reconnect the original disk (or free destination space), then press **Resume**, which reruns the paused copy with the same options after a fresh preflight.
+- "Keep the Mac awake" runs `caffeinate -dims -w <pid>` bound to the running command only.
+
+## CLI quick start
+
+```bash
+uv run macos-data-rescue --help
+uv run macos-data-rescue preflight --job-dir "$JOB" --source "$SRC" --dest "$DST"
+uv run macos-data-rescue init --job-dir "$JOB" --source "$SRC" --dest "$DST"
+uv run macos-data-rescue next --job-dir "$JOB"
+```
 
 ## Typical service workflow
 
@@ -120,22 +158,157 @@ uv run macos-data-rescue report --job-dir "$JOB" --format json > "$JOB/report.js
 
 `customer-report` writes a customer-facing handoff report to the recovery root by default, next to `user-data/` as `recovery-report.pdf` or `recovery-report.md`. English is the default. Use `--language cs` for Czech output, which defaults to `recovery-report-cs.pdf` or `recovery-report-cs.md` so it does not overwrite the English report. The PDF includes a summary, copied-data status, top-level recovered folder breakdown, and Library-area breakdown when applicable. The detailed `report` command stays on stdout and is intended for technician notes or `.rescue` artifacts.
 
-## Restore to the customer's new disk
+## Job profiles: customer-home, volume, restore
 
-The same CLI handles the opposite direction: rescued data on the service disk -> the customer's new disk. A `restore` job mirrors the rescued tree 1:1 — no excludes are applied, and `Volume Applications/` / `Home Applications/` folders are copied as-is.
+`macos-data-rescue` supports three dedicated job profiles passed via `--profile <name>` at `init` (or selected via radio buttons in the GUI Console). The profile determines the scan scope, default exclusion policies, custom exclusion support, and approval gating.
 
+### Profile comparison
+
+| Profile | Intended source | Scan scope / phases | Default exclusions | Custom `--exclude` | Approval gates | Destination write behavior |
+|---|---|---|---|---|---|---|
+| `customer-home` *(default)* | Mounted macOS user home (`/Users/username`) | Phased (`visible-home`, `hidden-home`, `app-data`, `applications`, `full-home`) | Yes (caches, trash, logs, temp, `.Spotlight*`, `node_modules`, etc.) | ❌ Not allowed | ✅ Required for `app-data`, `applications`, `full-home` | Safe write to temp + atomic replace |
+| `volume` | External disk, partition, project folder, or Trash (`/.Trashes/501`) | Single scope (`volume` phase) | ❌ None (everything included by default) | ✅ Optional repeatable globs | ❌ None (unrestricted) | Safe write to temp + atomic replace |
+| `restore` | Rescued data tree (`user-data`) on recovery disk | Single scope (`restore` phase) | ❌ None (1:1 mirror of rescued files) | ❌ Not allowed | ❌ None (unrestricted) | Overwrites existing files at matching destination paths |
+
+---
+
+### 1. `customer-home` Profile (Default)
+
+The `customer-home` profile is engineered specifically for rescuing macOS user home folders (e.g. `/Volumes/Macintosh HD - Data/Users/customer`). Because a user home contains gigabytes of ephemeral browser caches, transient logs, virtual environments, and complex application support trees, this profile uses a **prioritized, phased rescue workflow**:
+
+#### Phased execution order
+- **`visible-home` (Ungated, recommended first):**  
+  Rescues standard visible user directories (`Desktop`, `Documents`, `Downloads`, `Pictures`, `Music`, `Movies`) and all customer-created non-hidden folders. Skips `~/Library`, `~/Applications`, `.Trash`, and cache ballast. Rescues the files the customer cares about most with minimal risk of stalling on broken system or cache files.
+- **`hidden-home` (Ungated, recommended second):**  
+  Rescues top-level configuration dotfiles and dotfolders (e.g. `.ssh`, `.gitconfig`, `.zshrc`, shell history), with obvious package ballast (e.g. `.npm`, `.cache`) pruned.
+- **`app-data` (Approval-gated):**  
+  Rescues curated, high-value customer data from `~/Library`: Apple Mail (`Mail`), iMessage/SMS attachments (`Messages`), Safari history and bookmarks (`Safari`), Keychain databases (`Keychains`), iOS device backups (`Application Support/MobileSync`), Notes, and essential application support folders.
+- **`applications` (Approval-gated):**  
+  Rescues application bundles (`.app`) from the source volume root `/Applications` and user `~/Applications` into separate archive folders: `Volume Applications/` and `Home Applications/`.
+- **`full-home` (Approval-gated):**  
+  Broad traversal across the entire home folder (visible, hidden, and complete `~/Library`), while still enforcing safe cache/log/temp exclusion rules.
+
+#### Default exclusions
+The `customer-home` profile automatically filters out disposable system and application ballast:
+- `.Trash`, `.Trashes`, `.fseventsd`, `.Spotlight-V100`
+- `Library/Caches`, `Library/Logs`, `Library/Saved Application State`
+- Virtual environments (`.venv`), `node_modules`, `__pycache__`, `.pytest_cache`
+- Browser and media caches (Google Chrome cache, Spotify cache, etc.)
+
+> [!NOTE]
+> Custom `--exclude` arguments are **not permitted** in `customer-home` mode (raises `RescueError`). This ensures deterministic behavior and reliable customer handoff reports.
+
+#### Approval gating
+`app-data`, `applications` and `full-home` (and the legacy `library` scope) reach private application data such as Mail, Messages and Keychains or large application trees, so they need the customer's decision first. `scan` refuses these phases and `copy`/`resume` refuse selections containing their rows until the decision is recorded. Ask the customer first; never approve on their behalf:
+
+```bash
+uv run macos-data-rescue approve --job-dir "$JOB" --phase app-data --by "Customer Consent via Phone"
+```
+
+In the GUI, **Record consent…** opens a dialog that requires the approving person's name and an explicit confirmation.
+
+#### Customer handoff reporting
+Jobs created with `customer-home` generate comprehensive, customer-friendly PDF and Markdown reports (`customer-report`) with a visual breakdown of recovered folders and Library data in English or Czech (`--language cs`).
+
+---
+
+### 2. `volume` Profile
+
+The `volume` profile is designed for rescuing non-home sources, such as an entire external disk (`/Volumes/CustomerDisk`), a secondary data partition, an isolated project repository, or recovery directories such as `/Volumes/CustomerDisk/.Trashes/501`.
+
+#### Key characteristics:
+- **Single scan scope:** Traverses the entire source tree in one run. Run `scan` without `--phase` (or default `all`); all manifest rows are tagged with phase `volume`. Copy or resume using `--phase volume` or `--phase all`.
+- **Zero default exclusions:** Unlike `customer-home`, the `volume` profile does **not** prune caches, Trash, `node_modules`, or backup directories (`Backups.backupdb`). On a secondary drive or recovered trash folder, what looks like "cache" or "trash" might be the exact lost data the customer needs!
+- **No approval gates:** Scanning and copying proceed directly without requiring `approve` commands.
+
+#### CLI usage example:
+```bash
+SRC="/Volumes/CustomerDisk/.Trashes/501"
+DST="/Volumes/RecoverySSD/Customer/recovered-trash"
+JOB="/Volumes/RecoverySSD/Customer/.trash-rescue"
+
+# 1. Preflight safety check
+uv run macos-data-rescue preflight --job-dir "$JOB" --source "$SRC" --dest "$DST"
+
+# 2. Initialize volume job (with optional custom exclusions)
+uv run macos-data-rescue init --job-dir "$JOB" --source "$SRC" --dest "$DST" --profile volume \
+  --exclude '.Spotlight*' --exclude 'Backups.backupdb*'
+
+# 3. Scan and copy
+uv run macos-data-rescue scan --job-dir "$JOB" --timeout 300
+uv run macos-data-rescue copy --job-dir "$JOB" --timeout 3600
+uv run macos-data-rescue status --job-dir "$JOB"
+```
+
+Put `JOB` and `DST` in disjoint directories on the recovery disk. Existing destination files at matching paths are replaced. **Empty directories are not recreated; symlinks and special files are recorded and skipped.** Ownership, bootability and a complete disk image are not recreated — the result is neither a bootable volume nor a filesystem image.
+
+In the GUI, select **Disk / folder (volume)**; an exclude field (comma-separated globs) appears.
+
+#### Custom repeatable exclusions (`--exclude`)
+When using `--profile volume`, operators can specify custom exclusion globs during `init`:
+- Patterns are case-sensitive globs matched against source-relative paths (without leading `/`).
+- Asterisks (`*`) can match across directory separators `/`.
+- When a directory path matches an exclude pattern, its entire subtree is pruned during scan.
+- Exclusions are permanently recorded in `manifest.sqlite` and the JSON audit report. They are immutable for the lifetime of the job; re-initializing with different excludes is rejected.
+
+---
+
+### 3. `restore` Profile
+
+The `restore` profile handles the final migration step: mirroring rescued data from the technician recovery drive back onto the customer's fresh or repaired Mac, replacement internal drive, or clean external volume.
+
+#### Key characteristics:
+- **1:1 Mirror (zero exclusions):** The restore scan walks the rescued directory (`user-data`) with zero filters. Every file present on the recovery disk is scheduled for restoration. Custom `--exclude` flags are not permitted.
+- **Single scope:** Scans the whole tree without `--phase` (or default `all`); all manifest rows are tagged with phase `restore`. Copy or resume using `--phase restore` or `--phase all`.
+- **Destination overwriting:** Existing destination files at matching relative paths are overwritten. Restoring should always target a fresh user home folder or clean target directory.
+- **Tool-wide limits:** empty directories are not recreated and symbolic links are recorded as `skipped`; check `report` before handoff. Do not generate `customer-report` from a restore job — the customer report comes from the rescue job.
+- **Application archives restored as data:** `Volume Applications/` and `Home Applications/` in the rescued tree are mirrored as plain data archive folders; they do not automatically install back into `/Applications`. Applications should be properly reinstalled on the new macOS installation.
+
+#### CLI usage example:
 ```bash
 JOB="/Volumes/RecoverySSD/Customer/.restore"
 SRC="/Volumes/RecoverySSD/Customer/user-data"
 DST="/Volumes/New Mac/Users/customer"
 
+# 1. Preflight safety check
+uv run macos-data-rescue preflight --job-dir "$JOB" --source "$SRC" --dest "$DST"
+
+# 2. Initialize restore job
 uv run macos-data-rescue init --job-dir "$JOB" --source "$SRC" --dest "$DST" --profile restore
-uv run macos-data-rescue scan --job-dir "$JOB"
+
+# 3. Scan and copy
+uv run macos-data-rescue scan --job-dir "$JOB" --timeout 300
 uv run macos-data-rescue copy --job-dir "$JOB" --timeout 3600
+
+# 4. Verify completion
 uv run macos-data-rescue status --job-dir "$JOB"
+uv run macos-data-rescue resume --job-dir "$JOB"  # Must print processed=0
 ```
 
-Restore jobs have a single scope: `scan` takes no `--phase` and records all rows with phase `restore` (`copy`/`resume` may use `--phase restore` or the default `all`). Existing destination files at the same paths are overwritten — restore into a fresh home folder. Two tool-wide limitations still apply: empty directories are not recreated (a rescued tree produced by this tool contains none), and symbolic links are recorded as `skipped` instead of recreated — check `report` before handoff. Files written over Share Disk / Target Disk Mode are owned by the service account; fix ownership on the new Mac afterwards (see [docs/agent-runbook.md](docs/agent-runbook.md)).
+#### Crucial post-restore ownership and permissions
+When rescuing or restoring over Share Disk / Target Disk Mode, all files created on the destination disk are owned by the **technician service account's UID/GID**, not the customer's account on the new Mac.
+
+> [!IMPORTANT]
+> Before handing the Mac back to the customer, you **must reset file permissions** on the new Mac. If you skip this, macOS will lock the customer out of their own restored files.
+>
+> On the customer's new Mac, open Terminal as admin and run:
+> ```bash
+> # Option A (macOS recommended):
+> diskutil resetUserPermissions / $(id -u customer)
+>
+> # Option B (direct chown):
+> sudo chown -R customer:staff /Users/customer
+> ```
+> *(Replace `customer` with the customer's actual short username).*
+
+---
+
+### Profile immutability and job safety
+
+To prevent accidental data corruption or bypassing security gates:
+- A job's profile is permanently committed to `manifest.sqlite` during `init`.
+- If you re-run `init` pointing to an existing job directory, the profile and custom exclusions must match the existing job configuration. Attempting to switch profiles (e.g. from `customer-home` to `restore`) will exit with an error.
+- To use a different profile or change exclusion patterns, create a fresh job directory (e.g. `.rescue-volume` or `.restore`).
 
 ## Exit codes
 
@@ -144,7 +317,7 @@ Restore jobs have a single scope: `scan` takes no `--phase` and records all rows
 | `0` | Command completed. `copy` / `resume` still return `0` when individual files are `failed` or `timed_out`; check status/report for per-file results. |
 | `1` | Job/runtime error such as an unsafe path, missing manifest, unreadable job config, or unexpected runtime failure. |
 | `2` | CLI usage error from argparse, such as missing required options or invalid argument values. |
-| `3` | `copy` / `resume` paused: storage unavailable, destination full, or `--auto-reconnect` gave up or was stopped while waiting. Run `next`. |
+| `3` | `copy` / `resume` paused: storage unavailable, destination full, or `--auto-reconnect` gave up or was stopped while waiting. Unattempted rows stay pending; reconnect the original disks or free space, then run `next` and `resume` with the same options. |
 | `130` | `copy` / `resume` interrupted (Ctrl-C / SIGTERM) during a copy pass; `resume` continues. |
 
 ## Automatic reconnect
@@ -182,6 +355,7 @@ Legacy phases remain available for existing jobs and older scripts:
 | `library` | selected `Library` data, excluding caches/logs |
 | `all` | all manifest rows for copy/resume; default scan keeps the original full-home behavior |
 | `restore` | restore-profile jobs only: every file in the rescued tree, 1:1, no excludes |
+| `volume` | volume-profile jobs only: every file in the source tree (subject to any custom `--exclude` globs) |
 
 Re-running `scan` for another phase upserts rows into the same manifest without deleting earlier phase results. Re-running the same phase after `stopped=timeout` or `stopped=limit` resumes after that phase's saved scan cursor; when the phase reaches the end, the cursor is cleared so future scans refresh from the beginning.
 
@@ -202,62 +376,6 @@ Default excludes include `.Trash`, `Library/Caches`, `Library/Logs`, `node_modul
 - Scan traversal and copy reads use isolated workers. Scan path validation and copy destination setup still involve parent-process filesystem calls; severe kernel I/O hangs there can still stall the command. See [rescue operations](docs/rescue-operations.md) for exact timeout and pause behavior.
 - For true hardware/kernel I/O hangs, a killed child may not exit immediately; the parent records timeout and continues as far as the OS allows.
 - This is not a forensic imaging tool. It is a practical technician rescue copier for mounted, unlocked user data.
-
-## Development
-
-```bash
-uv sync --locked
-uv run ruff check src tests
-uv run bandit -q -r src
-uv run pytest
-uv build
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) before submitting changes. Never attach real customer manifests, reports, paths, filenames, or recovered data to an issue or test fixture. Report security problems privately as described in [SECURITY.md](SECURITY.md).
-
-## License
-
-MIT. See [LICENSE](LICENSE).
-
-Before committing: run tests, commit with Conventional Commits, then run:
-
-```bash
-roborev wait
-roborev show HEAD
-```
-
-## Rescue a volume, Trash, or an ordinary folder
-
-Use `--profile volume` for a non-home source such as
-`/Volumes/CustomerDisk`, `/Volumes/CustomerDisk/Projects`, or
-`/Volumes/CustomerDisk/.Trashes/501`. It has one scope and **no default
-excludes**: Trash, caches, `node_modules`, and `Backups.backupdb` are included.
-
-```bash
-SRC="/Volumes/CustomerDisk/.Trashes/501"
-DST="/Volumes/RecoverySSD/Customer/recovered-trash"
-JOB="/Volumes/RecoverySSD/Customer/.trash-rescue"
-uv run macos-data-rescue preflight --job-dir "$JOB" --source "$SRC" --dest "$DST"
-uv run macos-data-rescue init --job-dir "$JOB" --source "$SRC" --dest "$DST" --profile volume
-uv run macos-data-rescue scan --job-dir "$JOB" --timeout 300
-uv run macos-data-rescue copy --job-dir "$JOB" --timeout 300
-uv run macos-data-rescue next --job-dir "$JOB"
-```
-
-Omit `--phase` when scanning. Copy/resume accept `all` or `volume`.
-Per-file timeout, atomic writes, manifests, and scan/copy resume work as for
-home rescues. Existing destination files at matching paths are replaced.
-**Empty directories are not recreated; symlinks and special files are
-recorded and skipped.** Ownership, bootability, and a complete disk image
-are not recreated.
-
-For deliberate exclusions, add repeatable `init --exclude` arguments, e.g.
-`--exclude '.Trashes' --exclude 'Backups.backupdb*'`. Patterns are
-case-sensitive globs against source-relative paths (no leading `/`);
-`*` may match `/`, and a matching directory prunes its entire subtree.
-Exclusions are stored in the job and JSON report and cannot change on
-re-init; start a new job to change scope. Without `--exclude`, every regular
-file is selected. The `restore` profile retains its separate restore meaning.
 
 ## Unreadable compressed files and recovery from a duplicate
 
@@ -294,3 +412,26 @@ count separately. Resume uses the persisted alternate mapping, including
 when the destination is missing; rescanning changed original content clears
 the mapping. A failed alternate attempt keeps the old destination intact and
 retains its mapping for retry. Start a new job to reset an unwanted mapping.
+
+## Development
+
+```bash
+uv sync --locked
+uv run ruff check src tests
+uv run bandit -q -r src
+uv run pytest
+uv build
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before submitting changes. Never attach real customer manifests, reports, paths, filenames, or recovered data to an issue or test fixture. Report security problems privately as described in [SECURITY.md](SECURITY.md).
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+
+Before committing: run tests, commit with Conventional Commits, then run:
+
+```bash
+roborev wait
+roborev show HEAD
+```

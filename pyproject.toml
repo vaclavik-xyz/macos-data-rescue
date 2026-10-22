@@ -29,6 +29,7 @@ Issues = "https://github.com/vaclavik-xyz/macos-data-rescue/issues"
 
 [project.scripts]
 macos-data-rescue = "macos_data_rescue.cli:main"
+macos-data-rescue-gui = "macos_data_rescue.gui:main"
 
 [build-system]
 requires = ["hatchling"]
