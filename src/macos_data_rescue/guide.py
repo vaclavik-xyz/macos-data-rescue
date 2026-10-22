@@ -88,8 +88,7 @@ def storage_escalation_lines(job_dir: Path, activity: dict) -> list[str]:
     return [
         f"state: storage-escalation ({activity.get('reason')})",
         "automatic reconnect gave up: the disk kept disconnecting, made no progress, or did not come back",
-        "recommended: stop file-level copying; image the disk with ddrescue and a mapfile,",
-        "or escalate to a data recovery lab (docs/agent-runbook.md \"Stop Or Escalate\")",
+        "more file-level copying stresses the disk; consider imaging it (ddrescue with a mapfile)",
         "only if the technician decides to continue file-level copying:",
         "  " + base_cmd("resume", "--job-dir", quoted(job_dir), "--phase", quoted(activity["phase"]),
                         "--auto-reconnect", "--acknowledge-storage-loss"),

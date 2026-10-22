@@ -22,7 +22,7 @@ from .storage import StoragePaused
 from .storage_events import ReconnectLimits, events_since_acknowledgement, limit_breach, record_event
 from .volumes import Diskutil
 
-ESCALATION_HINT = "stop file-level copying and image the disk (ddrescue) or escalate; see docs/agent-runbook.md"
+ESCALATION_HINT = "more file-level copying stresses the disk; consider imaging it (ddrescue)"
 OPERATOR_HINT = "operator decision required"
 # Only volumes auto-mounted under /Volumes are remounted. The boot/data volume
 # and custom mount points are never unmounted by the tool.

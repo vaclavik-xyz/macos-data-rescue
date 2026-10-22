@@ -353,15 +353,15 @@ def test_status_card_turns_next_into_one_sentence_and_one_action() -> None:
     text, action = recommendation(copy)
     view = status_view(OpState.IDLE, "cs", job_loaded=True, guide_text=text, action=action)
     assert (view.headline, view.action) == ("Připraveno", "guide")
-    assert view.body == "Doporučený krok: zkopírovat fázi visible-home."
-    assert action_label(action, "cs") == "Kopírovat visible-home"
-    assert action_label(action, "en") == "Copy visible-home"
+    assert view.body == "Další krok: kopírování (viditelná data)."
+    assert action_label(action, "cs") == "Kopírovat: viditelná data"
+    assert action_label(action, "en") == "Copy: visible data"
 
     text, action = recommendation(base_cmd("approve", "--job-dir", quoted(JOB), "--phase", "app-data"),
                                   state="state: approval-required phase=app-data")
     view = status_view(OpState.DONE, "en", job_loaded=True, guide_text=text, action=action)
     assert (view.headline, view.action) == ("Waiting for customer consent", "guide")
-    assert action_label(action, "cs") == "Zaznamenat souhlas: app-data…"
+    assert action_label(action, "cs") == "Zaznamenat souhlas: data aplikací…"
 
     done = "\n".join([f"job={JOB} profile=customer-home", "state: core-phases-complete",
                       "done: follow the handoff checklist in docs/agent-runbook.md"])
@@ -376,7 +376,7 @@ def test_status_card_pause_escalation_and_failures() -> None:
     assert (paused.headline, paused.tone, paused.action) == ("Pozastaveno: úložiště nedostupné", "red", "resume")
     assert "znovu připojte původní disk" in paused.body
     escalation = status_view(OpState.PAUSED_STORAGE, "en", job_loaded=True, escalation=True)
-    assert (escalation.headline, escalation.action) == ("Automatic reconnect gave up", "resume")
+    assert (escalation.headline, escalation.action) == ("The disk keeps disconnecting", "resume")
     assert "ddrescue" in escalation.body
     # the acknowledging recommendation only gets a label; the click still asks first
     ack = GuideAction("acknowledge", spec=CommandSpec(("resume", "--job-dir", str(JOB), "--phase", "visible-home")))
@@ -397,7 +397,7 @@ def test_busy_status_never_offers_a_primary_action(state: OpState) -> None:
                        running=CommandSpec(("copy", "--job-dir", str(JOB), "--phase", "visible-home")))
     assert view.action == "none"
     if state is OpState.RUNNING:
-        assert view.headline == "Kopíruji · visible-home"
+        assert view.headline == "Kopíruji · viditelná data"
     assert status_view(OpState.RUNNING, "en", job_loaded=True).headline == "Operation running"
 
 

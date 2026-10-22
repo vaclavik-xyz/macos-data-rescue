@@ -23,15 +23,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "dest_path": "Cíl:",
         "dest_hint": "Např. /Volumes/RecoverySSD/Zakaznik/user-data — na záchranném disku, mimo zdroj",
         "job_path": "Pracovní složka úlohy:",
-        "job_hint": "Manifest a záznamy, např. /Volumes/RecoverySSD/Zakaznik/.rescue — mimo zdroj",
+        "job_hint": "Sem se ukládá stav úlohy, např. /Volumes/RecoverySSD/Zakaznik/.rescue — mimo zdroj",
         "browse": "Vybrat…",
         "profile": "Profil:",
         "profile_home": "Domovská složka zákazníka (doporučeno)",
         "profile_volume": "Disk / složka (volume)",
         "profile_restore": "Obnova na nový disk (restore)",
         "volume_excludes": "Vyloučené vzory (čárkou oddělené, jen volume):",
-        "job_loaded_note": "Úloha je otevřená: zdroj, cíl a profil určuje manifest a nelze je měnit. "
-                           "Pro jinou úlohu ji nejdřív zavřete.",
+        "job_loaded_note": "Úloha je otevřená, cesty a profil už nejde měnit. Pro jinou úlohu ji zavřete.",
         "btn_preflight": "Spustit kontrolu (preflight)",
         "btn_init": "Kontrola a založení úlohy",
         "btn_open_job": "Otevřít existující úlohu…",
@@ -91,15 +90,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "state_failed": "Chyba",
         "state_done": "Dokončeno",
         "msg_stopping": "Počkejte, až proces skutečně skončí; do té doby nelze spustit nic dalšího.",
-        "msg_stopped": "Zapsaný stav zůstal v manifestu. Pokračujte doporučeným krokem.",
+        "msg_stopped": "Hotová práce zůstává uložená, dá se na ni navázat.",
         "msg_paused_storage": "Disk se odpojil nebo došlo místo: znovu připojte původní disk (nebo uvolněte "
                               "místo na cíli) a stiskněte Pokračovat.",
         "msg_pause_reason": "Důvod: {reason}",
-        "msg_waiting": "Pokud se disk nevrátí sám, připojte ho znovu; kopírování pak pokračuje samo.",
+        "msg_waiting": "Pokud se disk nevrátí sám, připojte ho znovu. Kopírování pak pokračuje samo.",
         "msg_waiting_external": "Čeká jiný proces (např. v Terminálu); tato konzole ho nemůže zastavit.",
-        "msg_storage_escalation": "Disk se opakovaně odpojoval nebo se nevrátil. Doporučeno: ukončit kopírování "
-                                  "po souborech a pořídit image disku (ddrescue), případně disk předat do "
-                                  "datové laboratoře.",
+        "msg_storage_escalation": "Disk se opakovaně odpojuje nebo se nevrátil. Další kopírování ho zatěžuje; "
+                                  "zvažte image disku (ddrescue).",
         "storage_events_summary": "Odpojení disku: {losses} · automaticky obnoveno: {reconnects}",
         "msg_failed": "Příkaz {command} skončil chybou (kód {code}). Podrobnosti jsou v záznamu činnosti.",
         "msg_preflight_failed": "Operace nebyla spuštěna. Výsledek kontroly je na kartě Příprava.",
@@ -148,16 +146,16 @@ MESSAGES: dict[str, dict[str, str]] = {
         "err_title": "Chyba",
         "info_title": "Informace",
         "confirm_stop_title": "Zastavit operaci",
-        "confirm_stop_msg": "Zastavit probíhající operaci?\n\nZapsaný stav v manifestu zůstane a lze na něj navázat.",
-        "confirm_stop_waiting_msg": "Zastavit čekání na disk?\n\nBěh skončí jako pozastavený (kód 3), bez "
-                                    "vzdání automatického obnovení; později pokračujte tlačítkem Pokračovat.",
+        "confirm_stop_msg": "Zastavit probíhající operaci?\n\nHotová práce zůstane uložená.",
+        "confirm_stop_waiting_msg": "Zastavit čekání na disk?\n\nÚloha zůstane pozastavená, později stačí "
+                                    "Pokračovat.",
         "confirm_close_title": "Ukončit aplikaci",
         "confirm_close_msg": "Probíhá operace. Zastavit ji a po jejím ukončení zavřít aplikaci?",
         "confirm_close_stopping_msg": "Proces se stále ukončuje. Zavřít okno hned? "
                                       "Proces může ještě chvíli doběhnout na pozadí.",
         "approve_dialog_title": "Souhlas pro fázi {phase}",
-        "approve_dialog_text": "Fáze „{phase}“ vyžaduje výslovný souhlas zákazníka. Zaznamenejte ho jen tehdy, "
-                               "když zákazník skutečně souhlasil. Souhlas se uloží do manifestu se jménem a časem.",
+        "approve_dialog_text": "Fáze „{phase}“ vyžaduje souhlas zákazníka. Zaznamenejte ho, jen pokud zákazník "
+                               "opravdu souhlasil. Uloží se jméno a čas.",
         "approve_by_label": "Kdo souhlasil (jméno):",
         "approve_consent_check": "Zákazník s touto fází výslovně souhlasil",
         "btn_confirm_approval": "Zaznamenat souhlas",
@@ -172,17 +170,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "err_invalid_limit": "{field}: zadejte kladné celé číslo nebo nechte prázdné.",
         "err_invalid_non_negative": "{field}: zadejte nulu nebo kladné číslo.",
         "err_invalid_count": "{field}: zadejte kladné celé číslo.",
-        "confirm_ack_title": "Automatické obnovení to vzdalo",
-        "confirm_ack_msg": "Automatické obnovení po odpojení disku to vzdalo: disk se opakovaně odpojoval, "
-                           "nepřibývala nová data nebo se nevrátil.\n\nDoporučení: ukončete kopírování po souborech "
-                           "a pořiďte image disku nástrojem ddrescue s mapfile, případně disk předejte do datové "
-                           "laboratoře.\n\nPřesto pokračovat a automatické obnovení znovu povolit? Potvrzení se "
-                           "zaznamená do úlohy (--acknowledge-storage-loss).",
-        "confirm_continue_msg": "Automatické obnovení po odpojení disku to vzdalo: disk se opakovaně odpojoval, "
-                                "nepřibývala nová data nebo se nevrátil.\n\nDoporučení: ukončete kopírování po "
-                                "souborech a pořiďte image disku nástrojem ddrescue s mapfile, případně disk "
-                                "předejte do datové laboratoře.\n\nPřesto pokračovat v kopírování po souborech "
-                                "bez automatického obnovení?",
+        "confirm_ack_title": "Disk se opakovaně odpojuje",
+        "confirm_ack_msg": "Disk se opakovaně odpojuje nebo se nevrátil a automatické obnovení se zastavilo. "
+                           "Další kopírování disk zatěžuje; zvažte image disku (ddrescue).\n\nPokračovat a automatické obnovení znovu zapnout?",
+        "confirm_continue_msg": "Disk se opakovaně odpojuje nebo se nevrátil a automatické obnovení se zastavilo. "
+                                "Další kopírování disk zatěžuje; zvažte image disku (ddrescue).\n\nPokračovat bez automatického obnovení?",
         "err_select_failed": "Vyberte selhaný soubor v levé tabulce.",
         "err_select_both": "Vyberte selhaný soubor i kandidáta.",
         "err_job_load": "Úlohu nelze otevřít:\n{error}",
@@ -194,9 +186,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "saved_msg": "Uloženo: {path}",
         "tab_results": "Výsledky",
         "btn_resume_anyway": "Přesto pokračovat…",
-        "do_scan": "Skenovat {phase}",
-        "do_copy": "Kopírovat {phase}",
-        "do_resume": "Pokračovat {phase}",
+        "do_scan": "Skenovat: {phase}",
+        "do_copy": "Kopírovat: {phase}",
+        "do_resume": "Pokračovat: {phase}",
         "do_verify": "Ověřit integritu",
         "do_report": "Vytvořit technickou zprávu",
         "do_customer_report": "Vytvořit protokol pro zákazníka",
@@ -209,7 +201,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "status_needs_consent": "Čeká na souhlas zákazníka",
         "status_copy_complete": "Kopírování dokončeno",
         "status_done": "Hotovo",
-        "status_done_body": "Vše je zachráněno a protokoly jsou vytvořené. Projděte předávací kontrolu podle docs/agent-runbook.md.",
+        "status_done_body": "Data jsou zachráněná a protokoly vytvořené.",
         "status_needs_review": "Potřeba ruční kontroly",
         "status_needs_review_body": "Některé soubory se nepodařilo zachránit; projděte je v technické zprávě.",
         "status_integrity_failed": "Ověření cíle selhalo",
@@ -220,10 +212,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "status_stopped": "Zastaveno",
         "status_stopping": "Zastavuji…",
         "status_paused": "Pozastaveno: úložiště nedostupné",
-        "status_escalation": "Automatické obnovení to vzdalo",
+        "status_escalation": "Disk se opakovaně odpojuje",
         "status_cooldown": "Chladnutí disku — {remaining} (pokus {attempt})",
         "status_waiting": "Čekám na disk — {remaining} (pokus {attempt})",
-        "status_running_body": "Nechte operaci doběhnout. Zapsaný stav se průběžně ukládá do manifestu.",
+        "status_running_body": "Průběh se ukládá, po přerušení se pokračuje tam, kde se skončilo.",
         "status_run_preflight": "Kontroluji prostředí",
         "status_run_init": "Zakládám úlohu",
         "status_run_scan": "Skenuji",
@@ -232,19 +224,19 @@ MESSAGES: dict[str, dict[str, str]] = {
         "status_run_approve": "Zaznamenávám souhlas",
         "status_run_report": "Vytvářím protokol",
         "status_run_other": "Probíhá operace",
-        "status_next_scan": "Doporučený krok: naskenovat fázi {phase}.",
-        "status_next_copy": "Doporučený krok: zkopírovat fázi {phase}.",
-        "status_next_resume": "Doporučený krok: pokračovat v kopírování fáze {phase}.",
-        "status_next_verify": "Doporučený krok: ověřit integritu zkopírovaných dat.",
+        "status_next_scan": "Další krok: skenování ({phase}).",
+        "status_next_copy": "Další krok: kopírování ({phase}).",
+        "status_next_resume": "Další krok: pokračovat v kopírování ({phase}).",
+        "status_next_verify": "Další krok: ověřit zkopírovaná data.",
         "status_next_reports": "Zbývá vytvořit protokoly.",
-        "status_next_status": "Doporučený krok: zkontrolovat stav úlohy; postup je v Detailu.",
-        "status_next_approve": "Fáze {phase} vyžaduje výslovný souhlas zákazníka. Zaznamenejte ho, jen pokud zákazník skutečně souhlasil.",
-        "status_next_none": "Žádný krok nelze spustit automaticky; postup je v Detailu.",
+        "status_next_status": "Postup je v Detailu.",
+        "status_next_approve": "Je potřeba souhlas zákazníka ({phase}).",
+        "status_next_none": "Postup je v Detailu.",
         "reconnect_hint_on": "Automatické obnovení po odpojení: zapnuto",
         "reconnect_hint_off": "Automatické obnovení po odpojení: vypnuto",
         "summary_files": "{done} / {total} souborů",
         "summary_eta": "zbývá {eta}",
-        "status_cooldown_body": "Disk se odpojil. Během chladnutí na něj nesahejte; kopírování se pak obnoví samo.",
+        "status_cooldown_body": "Disk se odpojil a chladne. Potom se zkusí znovu připojit a kopírování pokračuje.",
     },
     "en": {
         "app_title": "macOS Data Rescue — technician console",
@@ -255,7 +247,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "dest_path": "Destination:",
         "dest_hint": "E.g. /Volumes/RecoverySSD/Customer/user-data — on the recovery disk, outside the source",
         "job_path": "Job directory:",
-        "job_hint": "Manifest and logs, e.g. /Volumes/RecoverySSD/Customer/.rescue — outside the source",
+        "job_hint": "Job state is stored here, e.g. /Volumes/RecoverySSD/Customer/.rescue — outside the source",
         "browse": "Browse…",
         "profile": "Profile:",
         "profile_home": "Customer home (recommended)",
@@ -323,15 +315,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "state_failed": "Failed",
         "state_done": "Done",
         "msg_stopping": "Wait until the process has really exited; nothing else can start until then.",
-        "msg_stopped": "Committed progress stays in the manifest. Continue with the recommended step.",
+        "msg_stopped": "Finished work stays saved and can be continued.",
         "msg_paused_storage": "A disk disconnected or ran out of space: reconnect the original disk (or free "
                               "space on the destination), then press Resume.",
         "msg_pause_reason": "Reason: {reason}",
         "msg_waiting": "If the disk does not come back on its own, reconnect it; copying then continues by itself.",
         "msg_waiting_external": "Another process (e.g. in Terminal) is waiting; this console cannot stop it.",
-        "msg_storage_escalation": "The disk kept disconnecting or did not come back. Recommended: stop "
-                                  "file-level copying and image the disk (ddrescue), or hand it to a data "
-                                  "recovery lab.",
+        "msg_storage_escalation": "The disk keeps disconnecting or did not come back. More copying stresses it; "
+                                  "consider imaging the disk (ddrescue).",
         "storage_events_summary": "Disk disconnections: {losses} · reconnected automatically: {reconnects}",
         "msg_failed": "Command {command} failed (exit {code}). See the activity log for details.",
         "msg_preflight_failed": "The operation was not started. The check results are on the Setup tab.",
@@ -381,7 +372,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "err_title": "Error",
         "info_title": "Information",
         "confirm_stop_title": "Stop operation",
-        "confirm_stop_msg": "Stop the running operation?\n\nCommitted progress stays in the manifest and can be resumed.",
+        "confirm_stop_msg": "Stop the running operation?\n\nFinished work stays saved.",
         "confirm_stop_waiting_msg": "Stop waiting for the disk?\n\nThe run ends as paused (exit 3) without an "
                                     "auto-reconnect give-up; press Resume later to continue.",
         "confirm_close_title": "Quit",
@@ -405,16 +396,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "err_invalid_limit": "{field}: enter a positive whole number or leave it empty.",
         "err_invalid_non_negative": "{field}: enter zero or a positive number.",
         "err_invalid_count": "{field}: enter a positive whole number.",
-        "confirm_ack_title": "Automatic reconnect gave up",
-        "confirm_ack_msg": "Automatic reconnect after disk loss gave up: the disk kept disconnecting, no new data "
-                           "was copied, or it did not come back.\n\nRecommended: stop file-level copying and image "
-                           "the disk with ddrescue and a mapfile, or hand it to a data recovery lab.\n\n"
-                           "Continue anyway and re-enable automatic reconnect? The acknowledgement is recorded in "
-                           "the job (--acknowledge-storage-loss).",
-        "confirm_continue_msg": "Automatic reconnect after disk loss gave up: the disk kept disconnecting, no new "
-                                "data was copied, or it did not come back.\n\nRecommended: stop file-level copying "
-                                "and image the disk with ddrescue and a mapfile, or hand it to a data recovery "
-                                "lab.\n\nContinue file-level copying anyway, without automatic reconnect?",
+        "confirm_ack_title": "The disk keeps disconnecting",
+        "confirm_ack_msg": "The disk keeps disconnecting or did not come back, so automatic reconnect stopped. "
+                           "More copying stresses the disk; consider imaging it (ddrescue).\n\nContinue and turn automatic reconnect back on?",
+        "confirm_continue_msg": "The disk keeps disconnecting or did not come back, so automatic reconnect stopped. "
+                                "More copying stresses the disk; consider imaging it (ddrescue).\n\nContinue without automatic reconnect?",
         "err_select_failed": "Select a failed file in the left table.",
         "err_select_both": "Select both a failed file and a candidate.",
         "err_job_load": "Cannot open the job:\n{error}",
@@ -426,9 +412,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "saved_msg": "Saved: {path}",
         "tab_results": "Results",
         "btn_resume_anyway": "Continue anyway…",
-        "do_scan": "Scan {phase}",
-        "do_copy": "Copy {phase}",
-        "do_resume": "Resume {phase}",
+        "do_scan": "Scan: {phase}",
+        "do_copy": "Copy: {phase}",
+        "do_resume": "Resume: {phase}",
         "do_verify": "Verify integrity",
         "do_report": "Create technician report",
         "do_customer_report": "Create customer report",
@@ -441,7 +427,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "status_needs_consent": "Waiting for customer consent",
         "status_copy_complete": "Copying complete",
         "status_done": "Done",
-        "status_done_body": "Everything is rescued and the reports exist. Go through the handoff checklist in docs/agent-runbook.md.",
+        "status_done_body": "The data is rescued and the reports are created.",
         "status_needs_review": "Manual review needed",
         "status_needs_review_body": "Some files could not be rescued; review them in the technician report.",
         "status_integrity_failed": "Destination verification failed",
@@ -452,10 +438,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "status_stopped": "Stopped",
         "status_stopping": "Stopping…",
         "status_paused": "Paused: storage unavailable",
-        "status_escalation": "Automatic reconnect gave up",
+        "status_escalation": "The disk keeps disconnecting",
         "status_cooldown": "Disk cooldown — {remaining} (attempt {attempt})",
         "status_waiting": "Waiting for the disk — {remaining} (attempt {attempt})",
-        "status_running_body": "Let the operation finish. Progress is saved to the manifest as it goes.",
+        "status_running_body": "Progress is saved; after an interruption it continues where it stopped.",
         "status_run_preflight": "Checking the environment",
         "status_run_init": "Creating the job",
         "status_run_scan": "Scanning",
@@ -464,21 +450,34 @@ MESSAGES: dict[str, dict[str, str]] = {
         "status_run_approve": "Recording consent",
         "status_run_report": "Creating report",
         "status_run_other": "Operation running",
-        "status_next_scan": "Recommended: scan phase {phase}.",
-        "status_next_copy": "Recommended: copy phase {phase}.",
-        "status_next_resume": "Recommended: resume copying phase {phase}.",
-        "status_next_verify": "Recommended: verify the integrity of the copied data.",
+        "status_next_scan": "Next: scan {phase}.",
+        "status_next_copy": "Next: copy {phase}.",
+        "status_next_resume": "Next: resume copying ({phase}).",
+        "status_next_verify": "Next: verify the copied data.",
         "status_next_reports": "The reports are still missing.",
-        "status_next_status": "Recommended: check the job status; the steps are in Details.",
-        "status_next_approve": "Phase {phase} needs the customer's explicit consent. Record it only if the customer actually agreed.",
-        "status_next_none": "No step can be started automatically; see Details.",
+        "status_next_status": "The steps are in Details.",
+        "status_next_approve": "Customer consent is needed ({phase}).",
+        "status_next_none": "The steps are in Details.",
         "reconnect_hint_on": "Automatic reconnect after disk loss: on",
         "reconnect_hint_off": "Automatic reconnect after disk loss: off",
         "summary_files": "{done} / {total} files",
         "summary_eta": "{eta} left",
-        "status_cooldown_body": "The disk disconnected. Do not touch it during the cooldown; copying then resumes by itself.",
+        "status_cooldown_body": "The disk disconnected and is cooling down. Then it is reconnected and copying continues.",
     },
 }
+
+# short names for headlines and sentences; the CLI phase ids stay in Details and the selector
+PHASE_LABELS: dict[str, dict[str, str]] = {
+    "cs": {"visible-home": "viditelná data", "hidden-home": "skrytá data", "app-data": "data aplikací",
+           "applications": "aplikace", "full-home": "celá domovská složka", "all": "vše"},
+    "en": {"visible-home": "visible data", "hidden-home": "hidden data", "app-data": "app data",
+           "applications": "applications", "full-home": "whole home", "all": "everything"},
+}
+
+
+def phase_label(phase: str, lang: str = "cs") -> str:
+    return PHASE_LABELS.get(lang, PHASE_LABELS["cs"]).get(phase, phase)
+
 
 PHASE_DESCRIPTIONS: dict[str, dict[str, str]] = {
     "cs": {
@@ -487,7 +486,7 @@ PHASE_DESCRIPTIONS: dict[str, dict[str, str]] = {
         "app-data": "Vybraná data z ~/Library (Mail, Zprávy, Safari, Poznámky, Klíčenky, zálohy iOS) — vyžaduje souhlas",
         "applications": "Aplikace z /Applications a ~/Applications jako archiv — vyžaduje souhlas",
         "full-home": "Celá domovská složka včetně ~/Library, bez mezipamětí — vyžaduje souhlas",
-        "all": "Všechny řádky manifestu (kopírování / ověření); jediný rozsah u úloh volume a restore",
+        "all": "Všechny naskenované soubory (kopírování / ověření); u úloh volume a restore jediný rozsah",
     },
     "en": {
         "visible-home": "Visible data (Desktop, Documents, Downloads, Pictures…); no Library or caches",
@@ -495,7 +494,7 @@ PHASE_DESCRIPTIONS: dict[str, dict[str, str]] = {
         "app-data": "Curated ~/Library data (Mail, Messages, Safari, Notes, Keychains, iOS backups) — needs consent",
         "applications": "Apps from /Applications and ~/Applications as an archive — needs consent",
         "full-home": "Whole home including ~/Library, without caches — needs consent",
-        "all": "All manifest rows (copy / verify); the only scope of volume and restore jobs",
+        "all": "All scanned files (copy / verify); the only scope of volume and restore jobs",
     },
 }
 

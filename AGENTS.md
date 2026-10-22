@@ -23,3 +23,7 @@
 ## Verification
 - Run `uv run pytest` before commits when tests exist.
 - Smoke test the CLI with a local fixture before claiming the MVP works.
+
+## UI and report copy
+- The console and reports are used by in-house service technicians. Keep texts short and practical; the app may give a brief hint (e.g. "consider imaging the disk (ddrescue)") but the decision is the technician's.
+- Never recommend external services such as data recovery labs, and never reference repo docs or internals (manifest, exit codes, runbook paths) in GUI texts. Raw CLI output belongs in the collapsible Details section.

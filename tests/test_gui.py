@@ -162,12 +162,12 @@ def test_guided_rescue_flow_through_real_cli(root, dialogs, tmp_path: Path, monk
 
     # unscanned visible-home: the guide runs preflight + scan
     assert app._guide_action().spec.args[:5] == ("scan", "--job-dir", str(job_dir), "--phase", "visible-home")
-    assert app.btn_guide.winfo_manager() == "grid" and app.btn_guide.cget("text") == "Skenovat visible-home"
+    assert app.btn_guide.winfo_manager() == "grid" and app.btn_guide.cget("text") == "Skenovat: viditelná data"
     app.execute_recommended_step()
     assert app.state is OpState.RUNNING
     assert disabled(app.btn_scan) and disabled(app.btn_approve) and disabled(app.btn_close_job)
     assert disabled(app.btn_guide) and not disabled(app.btn_stop)
-    assert app.btn_guide.winfo_manager() == "" and app.status_headline.cget("text") == "Skenuji · visible-home"
+    assert app.btn_guide.winfo_manager() == "" and app.status_headline.cget("text") == "Skenuji · viditelná data"
     assert str(app.phase_combo.cget("state")) == "disabled"
     finish(app, root, OpState.DONE)
     pump(root, lambda: app._guide_action().kind == "run" and app._guide_action().spec.subcommand == "copy")
@@ -268,7 +268,7 @@ def test_give_up_requires_confirmation_before_acknowledging(root, dialogs, tmp_p
     app = make_app(root, initial_job_dir=job_dir, lang="cs")
     pump(root, lambda: app.state is OpState.PAUSED_STORAGE and app.snapshot.storage_blocked)
     assert app._guide_action().kind == "acknowledge"
-    assert app.status_headline.cget("text") == "Automatické obnovení to vzdalo"
+    assert app.status_headline.cget("text") == "Disk se opakovaně odpojuje"
     assert app.btn_resume.winfo_manager() == "grid" and app.btn_resume.cget("text") == "Přesto pokračovat…"
     assert "storage-escalation" in app.detail_text.get("1.0", "end"), "raw next output stays in the details"
 

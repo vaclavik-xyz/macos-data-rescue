@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from ..reporting import format_size
 from .commands import CommandSpec, GuideAction
-from .i18n import format_count, format_eta, format_rate, localize_decimal, tr
+from .i18n import format_count, format_eta, format_rate, localize_decimal, phase_label, tr
 from .monitor import BADGE_STATUSES, Telemetry
 from .runner import RunFinished
 from .state import OpState, info, wait_view
@@ -55,27 +55,27 @@ def guide_state(text: str) -> str:
     return ""
 
 
-def _phase(spec: CommandSpec) -> str:
-    return spec.option("--phase") or "all"
+def _phase(spec: CommandSpec, lang: str) -> str:
+    return phase_label(spec.option("--phase") or "all", lang)
 
 
 def next_step_sentence(action: GuideAction, lang: str) -> str:
     if action.kind == "approve" and action.phase:
-        return tr("status_next_approve", lang, phase=action.phase)
+        return tr("status_next_approve", lang, phase=phase_label(action.phase, lang))
     if action.spec is not None and action.spec.subcommand in NEXT_STEP:
-        return tr(NEXT_STEP[action.spec.subcommand], lang, phase=_phase(action.spec))
+        return tr(NEXT_STEP[action.spec.subcommand], lang, phase=_phase(action.spec, lang))
     return tr("status_next_none", lang)
 
 
 def action_label(action: GuideAction, lang: str) -> str:
     """Label of the recommended-step button; "" when there is nothing to run."""
     if action.kind == "approve" and action.phase:
-        return tr("btn_guide_approve", lang, phase=action.phase)
+        return tr("btn_guide_approve", lang, phase=phase_label(action.phase, lang))
     if action.spec is None:
         return ""
     if action.kind == "acknowledge":
         return tr("btn_resume_anyway", lang)
-    return tr(ACTION_LABELS.get(action.spec.subcommand, "do_status"), lang, phase=_phase(action.spec))
+    return tr(ACTION_LABELS.get(action.spec.subcommand, "do_status"), lang, phase=_phase(action.spec, lang))
 
 
 def status_view(state: OpState, lang: str, *, job_loaded: bool, own_child: bool = True, guide_text: str = "",
@@ -90,7 +90,7 @@ def status_view(state: OpState, lang: str, *, job_loaded: bool, own_child: bool 
     if state is OpState.RUNNING:
         headline = t(RUN_HEADLINES.get(running.subcommand if running else "", "status_run_other"))
         phase = running.option("--phase") if running is not None else None
-        return StatusView(f"{headline} · {phase}" if phase else headline, t("status_running_body"))
+        return StatusView(f"{headline} · {phase_label(phase, lang)}" if phase else headline, t("status_running_body"))
     if state is OpState.WAITING:
         view = wait_view(activity or {}, now or datetime.now(timezone.utc))
         cooldown = view.phase == "cooldown"
