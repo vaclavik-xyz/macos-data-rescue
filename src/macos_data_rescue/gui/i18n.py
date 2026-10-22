@@ -254,8 +254,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "profile_volume": "Disk / folder (volume)",
         "profile_restore": "Restore to new disk (restore)",
         "volume_excludes": "Exclude patterns (comma-separated, volume only):",
-        "job_loaded_note": "A job is open: source, destination and profile come from its manifest and "
-                           "cannot be changed. Close the job to work on another one.",
+        "job_loaded_note": "A job is open; paths and profile can no longer be changed. Close it to work on another one.",
         "btn_preflight": "Run preflight",
         "btn_init": "Check and create job",
         "btn_open_job": "Open existing job…",
@@ -373,15 +372,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "info_title": "Information",
         "confirm_stop_title": "Stop operation",
         "confirm_stop_msg": "Stop the running operation?\n\nFinished work stays saved.",
-        "confirm_stop_waiting_msg": "Stop waiting for the disk?\n\nThe run ends as paused (exit 3) without an "
-                                    "auto-reconnect give-up; press Resume later to continue.",
+        "confirm_stop_waiting_msg": "Stop waiting for the disk?\n\nThe job stays paused; press Resume later.",
         "confirm_close_title": "Quit",
         "confirm_close_msg": "An operation is running. Stop it and close the application once it has exited?",
         "confirm_close_stopping_msg": "The process is still stopping. Close the window now? "
                                       "The process may keep running in the background for a while.",
         "approve_dialog_title": "Consent for phase {phase}",
-        "approve_dialog_text": "Phase “{phase}” requires the customer's explicit consent. Record it only if the "
-                               "customer actually agreed. The consent is stored in the manifest with name and time.",
+        "approve_dialog_text": ("Phase “{phase}” needs the customer's consent. Record it only if the customer really agreed. "
+                               "Your name and the time are saved."),
         "approve_by_label": "Who consented (name):",
         "approve_consent_check": "The customer explicitly agreed to this phase",
         "btn_confirm_approval": "Record consent",
