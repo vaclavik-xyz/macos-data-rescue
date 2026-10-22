@@ -90,6 +90,11 @@ class DataRescueApp:
         self.scan_budget_var = tk.StringVar(value="300")
         self.limit_var = tk.StringVar()
         self.caffeinate_var = tk.BooleanVar(value=True)
+        # on by default in the console (the CLI default is off); see docs/agent-runbook.md
+        self.auto_reconnect_var = tk.BooleanVar(value=True)
+        self.reconnect_cooldown_var = tk.StringVar(value=cmd.number_text(cmd.DEFAULT_COOLDOWN))
+        self.reconnect_wait_var = tk.StringVar(value=cmd.number_text(cmd.DEFAULT_WAIT))
+        self.max_reconnects_var = tk.StringVar(value=str(cmd.DEFAULT_MAX_RECONNECTS))
         self.lang_var = tk.StringVar(value=LANGUAGE_NAMES[self.lang])
         self.cust_format_var = tk.StringVar(value="pdf")
         self.cust_lang_var = tk.StringVar(value=self.lang)
@@ -273,6 +278,19 @@ class DataRescueApp:
             entry = ttk.Entry(options, textvariable=var, width=7)
             entry.pack(side="left", padx=(0, 14))
             self.option_widgets.append((label, entry))
+
+        reconnect = ttk.Frame(self.control_group)
+        reconnect.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+        self.chk_auto_reconnect = ttk.Checkbutton(reconnect, variable=self.auto_reconnect_var,
+                                                  command=self._apply_controls)
+        self.chk_auto_reconnect.pack(side="left", padx=(0, 14))
+        self.reconnect_widgets: list[tuple[ttk.Label, ttk.Entry]] = []
+        for var in (self.reconnect_cooldown_var, self.reconnect_wait_var, self.max_reconnects_var):
+            label = ttk.Label(reconnect)
+            label.pack(side="left", padx=(0, 4))
+            entry = ttk.Entry(reconnect, textvariable=var, width=6)
+            entry.pack(side="left", padx=(0, 14))
+            self.reconnect_widgets.append((label, entry))
 
         self.dash_group = ttk.LabelFrame(frame, padding=10)
         self.dash_group.grid(row=2, column=0, sticky="ew", pady=(0, 8))
@@ -463,6 +481,10 @@ class DataRescueApp:
         self.chk_caffeinate.configure(text=t("caffeinate"))
         for (label, _entry), key in zip(self.option_widgets, ("per_file_timeout", "scan_budget", "limit_optional")):
             label.configure(text=t(key))
+        self.chk_auto_reconnect.configure(text=t("auto_reconnect"))
+        for (label, _entry), key in zip(self.reconnect_widgets,
+                                        ("reconnect_cooldown", "reconnect_wait", "max_reconnects")):
+            label.configure(text=t(key))
         self.dash_group.configure(text=t("telemetry_title"))
         self.lbl_bytes_title.configure(text=t("data_volume"))
         self.lbl_files_title.configure(text=t("file_count"))
@@ -612,6 +634,9 @@ class DataRescueApp:
         for _label, entry in self.option_widgets:
             set_enabled(entry, c["options"])
         set_enabled(self.chk_caffeinate, c["options"])
+        set_enabled(self.chk_auto_reconnect, c["options"])
+        for _label, entry in self.reconnect_widgets:
+            set_enabled(entry, c["options"] and bool(self.auto_reconnect_var.get()))
         set_enabled(self.btn_scan, c["scan"])
         set_enabled(self.btn_copy, c["copy"])
         set_enabled(self.btn_verify, c["verify"])
@@ -757,6 +782,9 @@ class DataRescueApp:
         action = self._guide_action()
         if action.kind == "run":
             label = self._t("btn_guide_run",
+                            command=" ".join([action.spec.subcommand, *self._phase_args(action.spec)]))
+        elif action.kind == "acknowledge":
+            label = self._t("btn_guide_acknowledge",
                             command=" ".join([action.spec.subcommand, *self._phase_args(action.spec)]))
         elif action.kind == "approve":
             label = self._t("btn_guide_approve", phase=action.phase)
@@ -939,6 +967,54 @@ class DataRescueApp:
             messagebox.showerror(self._t("err_title"), self._t("err_invalid_limit", field=self._t("field_limit")))
             return False, None
 
+    def _reconnect_options(self) -> tuple[bool, cmd.ReconnectOptions | None]:
+        """The auto-reconnect choice; (False, None) after an invalid value was reported."""
+        if not self.auto_reconnect_var.get():
+            return True, None
+        fields = ((self.reconnect_cooldown_var, cmd.parse_non_negative_float, "err_invalid_non_negative",
+                   "field_reconnect_cooldown"),
+                  (self.reconnect_wait_var, cmd.parse_positive_float, "err_invalid_number", "field_reconnect_wait"),
+                  (self.max_reconnects_var, cmd.parse_positive_int, "err_invalid_count", "field_max_reconnects"))
+        values = []
+        for var, parse, error_key, field_key in fields:
+            try:
+                values.append(parse(var.get()))
+            except ValueError:
+                messagebox.showerror(self._t("err_title"), self._t(error_key, field=self._t(field_key)))
+                return False, None
+        return True, cmd.ReconnectOptions(*values)
+
+    def _storage_blocked(self) -> bool:
+        return self.snapshot is not None and self.snapshot.storage_blocked
+
+    def _escalation_pending(self) -> bool:
+        """The paused copy ended with a reconnect give-up (``next``: storage-escalation)."""
+        return self._storage_blocked() and (self.snapshot.activity or {}).get("state") == "paused"
+
+    def _start_copy_spec(self, spec: CommandSpec, *, escalation: bool = False) -> None:
+        """Start a copy/resume after a fresh preflight.
+
+        Re-enabling auto-reconnect after a give-up is the operator's decision:
+        ``--acknowledge-storage-loss`` is only ever added after this confirmation.
+        While the escalation is pending, continuing without auto-reconnect is
+        confirmed as well.
+        """
+        if self.job_dir is None:
+            return
+        escalation = escalation or self._escalation_pending()
+        if cmd.needs_storage_acknowledgement(spec, blocked=self._storage_blocked(), escalation=escalation):
+            if not self._ask_warning("confirm_ack_title", "confirm_ack_msg"):
+                return
+            spec = cmd.with_acknowledgement(spec)
+        elif escalation and spec.subcommand in cmd.COPY_COMMANDS:
+            if not self._ask_warning("confirm_ack_title", "confirm_continue_msg"):
+                return
+        self._start(cmd.with_preflight(spec, self.job_dir))
+
+    def _ask_warning(self, title_key: str, message_key: str) -> bool:
+        return bool(messagebox.askyesno(self._t(title_key), self._t(message_key),
+                                        icon=messagebox.WARNING, default=messagebox.NO))
+
     def _browse_source(self) -> None:
         path = filedialog.askdirectory(title=self._t("select_source_title"))
         if path:
@@ -1030,25 +1106,33 @@ class DataRescueApp:
         if self.job_dir is None:
             return
         timeout = self._file_timeout()
+        if timeout is None:
+            return
         ok, limit = self._limit()
-        if timeout is not None and ok:
-            spec = cmd.copy_spec(self.job_dir, self.phase_var.get(), timeout, limit)
-            self._start(cmd.with_preflight(spec, self.job_dir))
+        if not ok:
+            return
+        ok, reconnect = self._reconnect_options()
+        if ok:
+            self._start_copy_spec(cmd.copy_spec(self.job_dir, self.phase_var.get(), timeout, limit,
+                                                reconnect=reconnect))
 
     def resume_paused(self) -> None:
         if self.job_dir is None:
             return
+        ok, reconnect = self._reconnect_options()
+        if not ok:
+            return
         last = self.last_copy_spec
         if last is not None and last.option("--job-dir") == str(self.job_dir):
-            spec = cmd.resume_from(last)
+            spec = cmd.with_reconnect(cmd.resume_from(last), reconnect)
         else:
             timeout = self._file_timeout()
             if timeout is None:
                 return
             activity = (self.snapshot.activity if self.snapshot is not None else None) or {}
             phase = activity.get("phase") or self.phase_var.get()
-            spec = cmd.copy_spec(self.job_dir, phase, timeout, command="resume")
-        self._start(cmd.with_preflight(spec, self.job_dir))
+            spec = cmd.copy_spec(self.job_dir, phase, timeout, command="resume", reconnect=reconnect)
+        self._start_copy_spec(spec)
 
     def start_verify(self) -> None:
         if self.job_dir is None:
@@ -1064,8 +1148,15 @@ class DataRescueApp:
         if action.kind == "approve" and action.phase:
             # consent is never recorded by the guide; the operator must confirm a name
             self.approve_phase_dialog(action.phase)
-        elif action.kind == "run" and action.spec is not None:
-            self._start(cmd.with_preflight(action.spec, self.job_dir))
+        elif action.kind in ("run", "acknowledge") and action.spec is not None:
+            if action.spec.subcommand not in cmd.COPY_COMMANDS:
+                self._start(cmd.with_preflight(action.spec, self.job_dir))
+                return
+            ok, reconnect = self._reconnect_options()
+            if ok:
+                # the checkbox decides; an "acknowledge" step always asks before re-enabling the loop
+                self._start_copy_spec(cmd.with_reconnect(action.spec, reconnect),
+                                      escalation=action.kind == "acknowledge")
         elif self.snapshot is not None:
             messagebox.showinfo(self._t("info_title"), self.snapshot.guide_text)
 
@@ -1118,6 +1209,7 @@ class DataRescueApp:
         message = self._t("confirm_fallback_msg", path=failed, candidate=candidate["path"],
                           evidence=", ".join(candidate.get("evidence", [])))
         if messagebox.askyesno(self._t("confirm_fallback_title"), message):
+            # a single-file recovery never auto-reconnects (the CLI refuses --path with it)
             spec = cmd.copy_spec(self.job_dir, "all", timeout, path=failed, fallback_from=candidate["path"])
             self._start(cmd.with_preflight(spec, self.job_dir))
 

@@ -9,19 +9,29 @@ from pathlib import Path
 import pytest
 
 from helpers import init_and_scan, run_cli, write_file
-from macos_data_rescue.guide import base_cmd, quoted
+from macos_data_rescue.cli import build_parser
+from macos_data_rescue.guide import base_cmd, quoted, storage_escalation_lines
 from macos_data_rescue.gui.commands import (
+    ACK_FLAG,
     CommandSpec,
+    ReconnectOptions,
     copy_spec,
+    needs_storage_acknowledgement,
     parse_guide_action,
+    parse_non_negative_float,
     parse_optional_positive_int,
     parse_positive_float,
+    parse_positive_int,
     parse_preflight_line,
     parse_report_path,
     resume_from,
     approve_spec,
+    with_acknowledgement,
     with_preflight,
+    with_reconnect,
 )
+from macos_data_rescue.manifest import connect
+from macos_data_rescue.storage_events import record_event
 from macos_data_rescue.gui.monitor import JobMonitor, JobSnapshot, read_job_snapshot, telemetry_from
 from macos_data_rescue.gui.runner import CommandRunner, KeepAwake, OutputLine, RunFinished, RunnerNotice
 from macos_data_rescue.gui.state import (
@@ -116,6 +126,95 @@ def test_command_builders() -> None:
     assert [s.subcommand for s in with_preflight(CommandSpec(("verify",)), JOB)] == ["verify"]
 
 
+# -- auto-reconnect options ----------------------------------------------------
+
+def test_reconnect_defaults_equal_cli_defaults() -> None:
+    args = build_parser().parse_args(["copy", "--job-dir", "/j"])
+    options = ReconnectOptions()
+    assert (options.cooldown, options.wait, options.max_reconnects) == (300, 1800, 6)
+    assert (args.reconnect_cooldown, args.reconnect_wait, args.max_reconnects) == (300, 1800, 6)
+    assert options.args() == ("--auto-reconnect",), "unchanged defaults are not passed"
+
+
+def test_copy_spec_with_and_without_auto_reconnect() -> None:
+    base = ("copy", "--job-dir", str(JOB), "--phase", "visible-home", "--timeout", "3600")
+    assert copy_spec(JOB, "visible-home", 3600.0).args == base
+    assert copy_spec(JOB, "visible-home", 3600.0, reconnect=ReconnectOptions()).args == (*base, "--auto-reconnect")
+    custom = copy_spec(JOB, "visible-home", 3600.0, reconnect=ReconnectOptions(0, 90.5, 2))
+    assert custom.args == (*base, "--auto-reconnect", "--reconnect-cooldown", "0", "--reconnect-wait", "90.5",
+                           "--max-reconnects", "2")
+    parsed = build_parser().parse_args(list(custom.args))
+    assert parsed.auto_reconnect and (parsed.reconnect_cooldown, parsed.reconnect_wait,
+                                      parsed.max_reconnects) == (0, 90.5, 2)
+    # the CLI refuses --auto-reconnect with --path: a single-file recovery never gets it
+    fallback = copy_spec(JOB, "all", 30.0, path="a", fallback_from="b", reconnect=ReconnectOptions())
+    assert "--auto-reconnect" not in fallback.args
+
+
+def test_with_reconnect_replaces_options_and_never_keeps_acknowledgement() -> None:
+    old = CommandSpec(("resume", "--job-dir", str(JOB), "--phase", "all", "--timeout", "30", "--auto-reconnect",
+                       "--reconnect-cooldown", "5", ACK_FLAG))
+    assert with_reconnect(old, None).args == ("resume", "--job-dir", str(JOB), "--phase", "all", "--timeout", "30")
+    assert with_reconnect(old, ReconnectOptions(wait=60)).args[-3:] == ("--auto-reconnect", "--reconnect-wait", "60")
+    assert ACK_FLAG not in resume_from(old).args
+    # option values are never mistaken for flags
+    odd = CommandSpec(("copy", "--job-dir", str(JOB), "--path", "--auto-reconnect", "--fallback-from", ACK_FLAG))
+    assert resume_from(odd).args == ("resume", *odd.args[1:])
+    assert with_reconnect(odd, ReconnectOptions()).args == odd.args
+    scan = CommandSpec(("scan", "--job-dir", str(JOB)))
+    assert with_reconnect(scan, ReconnectOptions()) is scan
+
+
+def test_acknowledgement_needs_auto_reconnect_and_a_reason() -> None:
+    plain = copy_spec(JOB, "all", 30.0)
+    looping = copy_spec(JOB, "all", 30.0, reconnect=ReconnectOptions())
+    assert not needs_storage_acknowledgement(looping, blocked=False)
+    assert needs_storage_acknowledgement(looping, blocked=True)
+    assert needs_storage_acknowledgement(looping, blocked=False, escalation=True)
+    assert not needs_storage_acknowledgement(plain, blocked=True, escalation=True)
+    assert with_acknowledgement(looping).args[-1] == ACK_FLAG
+    with pytest.raises(ValueError):
+        with_acknowledgement(plain)
+
+
+def test_guide_never_runs_storage_acknowledgement() -> None:
+    lines = storage_escalation_lines(JOB, {"phase": "visible-home", "reason": "storage did not come back"})
+    action = parse_guide_action("\n".join([f"job={JOB} profile=customer-home", *lines]), JOB)
+    assert action.kind == "acknowledge"
+    assert ACK_FLAG not in action.spec.args
+    assert action.spec.args[:5] == ("resume", "--job-dir", str(JOB), "--phase", "visible-home")
+    other = guide_text(base_cmd("verify", "--job-dir", quoted(JOB), ACK_FLAG))
+    assert parse_guide_action(other, JOB).kind == "none"
+
+
+def test_give_up_blocks_until_acknowledged_but_operator_stop_does_not(tmp_path: Path) -> None:
+    from test_auto_reconnect import seed_identities
+
+    write_file(tmp_path / "source-home" / "a", b"hello")
+    job_dir, source, _ = init_and_scan(tmp_path)
+    seed_identities(job_dir, source_uuid=None, dest_uuid=None)
+    source.rename(source.with_name("gone"))
+    result = run_cli("copy", "--job-dir", str(job_dir), "--auto-reconnect", "--reconnect-cooldown", "0",
+                     "--reconnect-wait", "0.1", check=False)
+    assert result.returncode == 3, result.stdout + result.stderr
+    snapshot = read_job_snapshot(job_dir)
+    assert snapshot.storage_blocked and snapshot.storage_losses == 1 and snapshot.reconnects == 0
+    action = parse_guide_action(snapshot.guide_text, job_dir)
+    assert action.kind == "acknowledge" and ACK_FLAG not in action.spec.args
+
+    conn = connect(job_dir)
+    try:
+        record_event(conn, "acknowledged")
+        record_event(conn, "lost")
+        record_event(conn, "stopped")
+    finally:
+        conn.close()
+    after_stop = read_job_snapshot(job_dir)
+    assert not after_stop.storage_blocked
+    assert not needs_storage_acknowledgement(with_reconnect(action.spec, ReconnectOptions()),
+                                             blocked=after_stop.storage_blocked)
+
+
 @pytest.mark.parametrize("text", ["0", "-1", "nan", "inf", "abc", ""])
 def test_positive_float_rejects(text: str) -> None:
     with pytest.raises(ValueError):
@@ -129,6 +228,14 @@ def test_numeric_parsers_accept() -> None:
     for bad in ("0", "-3", "1.5", "x"):
         with pytest.raises(ValueError):
             parse_optional_positive_int(bad)
+    assert parse_non_negative_float("0") == 0 and parse_non_negative_float("1,5") == 1.5
+    for bad in ("-1", "nan", "inf", ""):
+        with pytest.raises(ValueError):
+            parse_non_negative_float(bad)
+    assert parse_positive_int("6") == 6
+    for bad in ("", "0", "2.5"):
+        with pytest.raises(ValueError):
+            parse_positive_int(bad)
 
 
 def test_output_parsers() -> None:

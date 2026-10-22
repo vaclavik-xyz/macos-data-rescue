@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from helpers import ROOT, init_and_scan, write_file
+from helpers import ROOT, init_and_scan, run_cli, write_file
 from macos_data_rescue.cli import build_parser
 from macos_data_rescue.gui.commands import CommandSpec
 from macos_data_rescue.gui.i18n import MESSAGES, PHASE_DESCRIPTIONS, HOME_PHASES, format_eta, format_rate, tr
@@ -64,6 +64,9 @@ def test_translations_are_complete() -> None:
         used |= set(re.findall(r'\bt\(\s*"([a-z_]+)"', text))
         used |= set(re.findall(r'RunnerNotice\("\w+", "([a-z_]+)"', text))
         used |= set(re.findall(r'"(log_stop_[a-z]+)"', text))
+        used |= set(re.findall(r'\btr\(\s*"([a-z_]+)"', text))
+        # keys kept in tuples and passed on (labels, validation errors, dialogs)
+        used |= set(re.findall(r'"((?:err|field|confirm|msg|log|state|btn|reconnect|max)_[a-z_]+)"', text))
     used |= {item.badge_key for item in STATE_INFO.values()}
     used |= {item.message_key for item in STATE_INFO.values() if item.message_key}
     missing = sorted(key for key in used if key not in MESSAGES["cs"])
@@ -229,8 +232,56 @@ def test_storage_pause_offers_resume_with_same_options(root, dialogs, tmp_path: 
     started: list = []
     app.runner.start = lambda steps, keep_awake=False: started.append(list(steps))
     app.resume_paused()
+    # auto-reconnect is on by default in the console; unchanged limits are not passed
     assert started == [[CommandSpec(("preflight", "--job-dir", str(job_dir))),
-                        CommandSpec(("resume", *copy.args[1:]))]]
+                        CommandSpec(("resume", *copy.args[1:], "--auto-reconnect"))]]
+    app._set_state(OpState.PAUSED_STORAGE)
+    app.auto_reconnect_var.set(False)
+    app.resume_paused()
+    assert started[1][1] == CommandSpec(("resume", *copy.args[1:]))
+    app._set_state(OpState.PAUSED_STORAGE)
+    app.auto_reconnect_var.set(True)
+    app.reconnect_cooldown_var.set("-1")
+    app.resume_paused()
+    assert len(started) == 2 and dialogs[-1][0] == "showerror"
+    assert not [c for c in dialogs if c[0] == "askyesno"], "no acknowledgement after a plain pause"
+
+
+def test_give_up_requires_confirmation_before_acknowledging(root, dialogs, tmp_path: Path, monkeypatch) -> None:
+    from test_auto_reconnect import seed_identities
+
+    write_file(tmp_path / "source-home" / "a", b"hello")
+    job_dir, source, _ = init_and_scan(tmp_path)
+    seed_identities(job_dir, source_uuid=None, dest_uuid=None)
+    source.rename(source.with_name("gone"))
+    gave_up = run_cli("copy", "--job-dir", str(job_dir), "--auto-reconnect", "--reconnect-cooldown", "0",
+                      "--reconnect-wait", "0.1", check=False)
+    assert gave_up.returncode == 3
+    app = make_app(root, initial_job_dir=job_dir, lang="cs")
+    pump(root, lambda: app.state is OpState.PAUSED_STORAGE and app.snapshot.storage_blocked)
+    assert app._guide_action().kind == "acknowledge"
+    assert app.btn_guide.cget("text").startswith("Pokračovat po potvrzení: resume")
+
+    started: list = []
+    app.runner.start = lambda steps, keep_awake=False: started.append(list(steps))
+    answers = iter([False, True, False, True])
+    asked: list = []
+    monkeypatch.setattr("tkinter.messagebox.askyesno",
+                        lambda title, message, **kw: asked.append(message) or next(answers))
+    app.resume_paused()
+    assert started == [] and "ddrescue" in asked[-1]
+    app.resume_paused()
+    assert started[-1][1].args[-2:] == ("--auto-reconnect", "--acknowledge-storage-loss")
+    # the recommended step never passes the flag silently
+    app._set_state(OpState.PAUSED_STORAGE)
+    app.execute_recommended_step()
+    assert len(started) == 1 and len(asked) == 3
+    # continuing without auto-reconnect is confirmed too, but never acknowledges
+    app.auto_reconnect_var.set(False)
+    app.execute_recommended_step()
+    assert len(started) == 2 and len(asked) == 4 and "bez automatického obnovení" in asked[-1]
+    assert "--acknowledge-storage-loss" not in started[-1][1].args
+    assert "--auto-reconnect" not in started[-1][1].args
 
 
 def test_opening_paused_job_shows_storage_pause(root, dialogs, tmp_path: Path) -> None:

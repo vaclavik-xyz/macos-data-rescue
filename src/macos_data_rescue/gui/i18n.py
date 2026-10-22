@@ -56,6 +56,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "guide_default": "Otevřete nebo založte úlohu.",
         "btn_guide_run": "Spustit: {command}",
         "btn_guide_approve": "Zaznamenat souhlas: {phase}…",
+        "btn_guide_acknowledge": "Pokračovat po potvrzení: {command}…",
         "btn_guide_none": "Není co spustit",
         "control_title": "Fáze záchrany",
         "select_phase": "Fáze:",
@@ -73,6 +74,13 @@ MESSAGES: dict[str, dict[str, str]] = {
         "field_file_timeout": "Timeout na soubor",
         "field_scan_budget": "Časový limit skenu",
         "field_limit": "Limit souborů",
+        "auto_reconnect": "Automaticky obnovit po odpojení disku",
+        "reconnect_cooldown": "Chladnutí (s):",
+        "reconnect_wait": "Čekání na disk (s):",
+        "max_reconnects": "Max. obnovení:",
+        "field_reconnect_cooldown": "Chladnutí",
+        "field_reconnect_wait": "Čekání na disk",
+        "field_max_reconnects": "Max. obnovení",
         "telemetry_title": "Průběh",
         "data_volume": "Data:",
         "file_count": "Soubory:",
@@ -168,6 +176,19 @@ MESSAGES: dict[str, dict[str, str]] = {
         "err_paths_required": "Vyplňte zdroj, cíl i pracovní složku.",
         "err_invalid_number": "{field}: zadejte kladné číslo.",
         "err_invalid_limit": "{field}: zadejte kladné celé číslo nebo nechte prázdné.",
+        "err_invalid_non_negative": "{field}: zadejte nulu nebo kladné číslo.",
+        "err_invalid_count": "{field}: zadejte kladné celé číslo.",
+        "confirm_ack_title": "Automatické obnovení to vzdalo",
+        "confirm_ack_msg": "Automatické obnovení po odpojení disku to vzdalo: disk se opakovaně odpojoval, "
+                           "nepřibývala nová data nebo se nevrátil.\n\nDoporučení: ukončete kopírování po souborech "
+                           "a pořiďte image disku nástrojem ddrescue s mapfile, případně disk předejte do datové "
+                           "laboratoře.\n\nPřesto pokračovat a automatické obnovení znovu povolit? Potvrzení se "
+                           "zaznamená do úlohy (--acknowledge-storage-loss).",
+        "confirm_continue_msg": "Automatické obnovení po odpojení disku to vzdalo: disk se opakovaně odpojoval, "
+                                "nepřibývala nová data nebo se nevrátil.\n\nDoporučení: ukončete kopírování po "
+                                "souborech a pořiďte image disku nástrojem ddrescue s mapfile, případně disk "
+                                "předejte do datové laboratoře.\n\nPřesto pokračovat v kopírování po souborech "
+                                "bez automatického obnovení?",
         "err_select_failed": "Vyberte selhaný soubor v levé tabulce.",
         "err_select_both": "Vyberte selhaný soubor i kandidáta.",
         "err_job_load": "Úlohu nelze otevřít:\n{error}",
@@ -220,6 +241,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "guide_default": "Open or create a job.",
         "btn_guide_run": "Run: {command}",
         "btn_guide_approve": "Record consent: {phase}…",
+        "btn_guide_acknowledge": "Continue after confirmation: {command}…",
         "btn_guide_none": "Nothing to run",
         "control_title": "Rescue phases",
         "select_phase": "Phase:",
@@ -237,6 +259,13 @@ MESSAGES: dict[str, dict[str, str]] = {
         "field_file_timeout": "Per-file timeout",
         "field_scan_budget": "Scan time budget",
         "field_limit": "File limit",
+        "auto_reconnect": "Automatically reconnect after disk loss",
+        "reconnect_cooldown": "Cooldown (s):",
+        "reconnect_wait": "Wait for disk (s):",
+        "max_reconnects": "Max. reconnects:",
+        "field_reconnect_cooldown": "Cooldown",
+        "field_reconnect_wait": "Wait for disk",
+        "field_max_reconnects": "Max. reconnects",
         "telemetry_title": "Progress",
         "data_volume": "Data:",
         "file_count": "Files:",
@@ -334,6 +363,18 @@ MESSAGES: dict[str, dict[str, str]] = {
         "err_paths_required": "Source, destination and job directory are all required.",
         "err_invalid_number": "{field}: enter a positive number.",
         "err_invalid_limit": "{field}: enter a positive whole number or leave it empty.",
+        "err_invalid_non_negative": "{field}: enter zero or a positive number.",
+        "err_invalid_count": "{field}: enter a positive whole number.",
+        "confirm_ack_title": "Automatic reconnect gave up",
+        "confirm_ack_msg": "Automatic reconnect after disk loss gave up: the disk kept disconnecting, no new data "
+                           "was copied, or it did not come back.\n\nRecommended: stop file-level copying and image "
+                           "the disk with ddrescue and a mapfile, or hand it to a data recovery lab.\n\n"
+                           "Continue anyway and re-enable automatic reconnect? The acknowledgement is recorded in "
+                           "the job (--acknowledge-storage-loss).",
+        "confirm_continue_msg": "Automatic reconnect after disk loss gave up: the disk kept disconnecting, no new "
+                                "data was copied, or it did not come back.\n\nRecommended: stop file-level copying "
+                                "and image the disk with ddrescue and a mapfile, or hand it to a data recovery "
+                                "lab.\n\nContinue file-level copying anyway, without automatic reconnect?",
         "err_select_failed": "Select a failed file in the left table.",
         "err_select_both": "Select both a failed file and a candidate.",
         "err_job_load": "Cannot open the job:\n{error}",

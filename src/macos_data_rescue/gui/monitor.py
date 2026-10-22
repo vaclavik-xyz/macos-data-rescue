@@ -22,6 +22,7 @@ from typing import Any
 from ..activity import activity_snapshot
 from ..guide import next_text
 from ..manifest import GATED_PHASES, UNREADABLE_COMPRESSED, connect, load_approval, load_config, status_summary
+from ..storage_events import blocked_by_give_up, list_events
 
 LOG = logging.getLogger(__name__)
 
@@ -41,6 +42,11 @@ class JobSnapshot:
     guide_text: str
     approvals: dict[str, str | None]
     failed_rows: tuple[tuple[str, str, int], ...]
+    # storage_events summary: disconnects, successful automatic reconnects, and
+    # whether a reconnect give-up still waits for the operator's acknowledgement
+    storage_losses: int = 0
+    reconnects: int = 0
+    storage_blocked: bool = False
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,8 @@ def read_job_snapshot(job_dir: Path) -> JobSnapshot:
             "order by relative_path limit ?",
             (*FAILED_STATUSES, FAILED_ROW_LIMIT),
         ).fetchall()
+        events = list_events(conn)
+        storage_blocked = blocked_by_give_up(conn)
     finally:
         conn.close()
     return JobSnapshot(
@@ -82,6 +90,9 @@ def read_job_snapshot(job_dir: Path) -> JobSnapshot:
         guide_text=next_text(job_dir),
         approvals={phase: load_approval(job_dir, phase) for phase in GATED_PHASES},
         failed_rows=tuple((row["relative_path"], row["status"], int(row["size"] or 0)) for row in rows),
+        storage_losses=sum(1 for event in events if event["kind"] == "lost"),
+        reconnects=sum(1 for event in events if event["kind"] == "resumed"),
+        storage_blocked=storage_blocked,
     )
 
 
