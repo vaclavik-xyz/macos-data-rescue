@@ -9,7 +9,16 @@ from .volumes import Diskutil, volume_identity
 
 
 class StoragePaused(Exception):
-    pass
+    """Storage became unavailable; the active file was returned to pending.
+
+    `reconnectable` is False for a full destination (ENOSPC/EDQUOT): waiting
+    for a disk cannot fix it. `file_id` names the row being copied, if any.
+    """
+
+    def __init__(self, message: str, *, reconnectable: bool = True, file_id: int | None = None) -> None:
+        super().__init__(message)
+        self.reconnectable = reconnectable
+        self.file_id = file_id
 
 
 def anchor(path: Path) -> dict:

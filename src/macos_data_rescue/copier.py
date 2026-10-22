@@ -44,6 +44,7 @@ XATTR_SHOWCOMPRESSION = 0x0020
 XATTR_NOFOLLOW = 0x0001
 XATTR_SKIP_NAMES = frozenset({"com.apple.quarantine", "com.apple.macl", "com.apple.decmpfs"})
 XATTR_WARNING_PREFIX = "extended attributes not fully preserved"
+DESTINATION_FULL_REASON = "Destination is full or its quota is exhausted; free space and resume."
 
 
 @dataclass
@@ -229,7 +230,7 @@ def process_row(
         # A storage outage does not consume this file's retry allowance.
         conn.execute("update files set attempts = max(0, attempts - 1) where id = ?", (row["id"],))
         conn.commit()
-        raise StoragePaused(str(pause))
+        raise StoragePaused(str(pause), reconnectable=pause != DESTINATION_FULL_REASON)
     if activity is not None:
         activity.completed(int(result.get("copied_bytes", 0)))
     if status == "copied":
@@ -860,7 +861,7 @@ def fsync_directory(path: Path) -> None:
 
 def storage_error_reason(exc):
     if isinstance(exc, OSError) and exc.errno in (errno.ENOSPC, errno.EDQUOT):
-        return "Destination is full or its quota is exhausted; free space and resume."
+        return DESTINATION_FULL_REASON
     if isinstance(exc, OSError) and exc.errno in (errno.ENODEV, errno.ENXIO):
         return "Storage device disconnected; reconnect the original disk and resume."
     return None
