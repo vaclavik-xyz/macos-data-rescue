@@ -16,6 +16,7 @@ from .manifest import (
     load_scan_done,
     manifest_path,
 )
+from .storage_events import blocked_by_give_up
 
 
 CORE_PHASES = ("visible-home", "hidden-home")
@@ -35,6 +36,16 @@ def next_text(job_dir: Path) -> str:
     stats = phase_stats(job_dir)
     lines = [f"job={job_dir} profile={config.profile}"]
     activity = activity_snapshot(job_dir)
+    if activity.get("state") == "waiting":
+        # snapshot reports a waiting state only while the writer still runs
+        return "\n".join(lines + [
+            f"state: waiting-for-storage ({activity.get('reason')})",
+            f"a copy run is waiting for its disks: phase={activity.get('wait_phase')} "
+            f"attempt={activity.get('attempt')} until={activity.get('wait_until')}",
+            "do not start another copy; let it reconnect, or stop it and run next again",
+        ])
+    if activity.get("state") == "paused" and storage_escalation_pending(job_dir):
+        return "\n".join(lines + storage_escalation_lines(job_dir, activity))
     if activity.get("state") == "paused":
         return "\n".join(lines + [f"state: paused ({activity.get('reason')})",
                                   "Reconnect the original disks / free destination space, then run:",
@@ -63,6 +74,26 @@ def next_text(job_dir: Path) -> str:
     else:
         lines.extend(customer_lines(job_dir, config, stats))
     return "\n".join(lines)
+
+
+def storage_escalation_pending(job_dir: Path) -> bool:
+    conn = connect(job_dir)
+    try:
+        return blocked_by_give_up(conn)
+    finally:
+        conn.close()
+
+
+def storage_escalation_lines(job_dir: Path, activity: dict) -> list[str]:
+    return [
+        f"state: storage-escalation ({activity.get('reason')})",
+        "automatic reconnect gave up: the disk kept disconnecting, made no progress, or did not come back",
+        "recommended: stop file-level copying; image the disk with ddrescue and a mapfile,",
+        "or escalate to a data recovery lab (docs/agent-runbook.md \"Stop Or Escalate\")",
+        "only if the technician decides to continue file-level copying:",
+        "  " + base_cmd("resume", "--job-dir", quoted(job_dir), "--phase", quoted(activity["phase"]),
+                        "--auto-reconnect", "--acknowledge-storage-loss"),
+    ]
 
 
 def phase_stats(job_dir: Path) -> dict[str, dict[str, int]]:

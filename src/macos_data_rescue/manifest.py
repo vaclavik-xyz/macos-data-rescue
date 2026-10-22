@@ -109,6 +109,14 @@ def create_schema(conn: sqlite3.Connection) -> None:
             device integer not null,
             inode integer not null
         );
+        create table if not exists storage_events (
+            id integer primary key,
+            at text not null,
+            at_epoch real not null,
+            role text,
+            kind text not null,
+            detail text
+        );
 
         create index if not exists idx_files_phase_status on files(phase, status);
         create index if not exists idx_files_status on files(status);

@@ -5,9 +5,20 @@ import json
 import stat
 from pathlib import Path
 
+from .volumes import Diskutil, volume_identity
+
 
 class StoragePaused(Exception):
-    pass
+    """Storage became unavailable; the active file was returned to pending.
+
+    `reconnectable` is False for a full destination (ENOSPC/EDQUOT): waiting
+    for a disk cannot fix it. `file_id` names the row being copied, if any.
+    """
+
+    def __init__(self, message: str, *, reconnectable: bool = True, file_id: int | None = None) -> None:
+        super().__init__(message)
+        self.reconnectable = reconnectable
+        self.file_id = file_id
 
 
 def anchor(path: Path) -> dict:
@@ -46,4 +57,34 @@ def load_anchors(conn, source: Path, dest: Path) -> dict:
     result = storage_anchors(source, dest)
     conn.execute("insert into config values('storage_anchors', ?)", (json.dumps(result),))
     conn.commit()
+    return result
+
+
+def stored_volume_identities(conn) -> dict | None:
+    row = conn.execute("select value from config where key = 'volume_identities'").fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def wait_only_identities() -> dict:
+    """Identities for a run without a recorded volume: only wait, never remount."""
+    unknown = dict(uuid=None, mount_point=None, fs_type=None, network=False, read_only=False)
+    return {"source": dict(unknown), "destination": dict(unknown)}
+
+
+def load_volume_identities(conn, source: Path, dest: Path, diskutil: Diskutil) -> dict:
+    """Record the source/destination volume identity once, like storage_anchors.
+
+    Call only right after a successful storage probe. An identity is persisted
+    only when every role resolved; a local volume whose diskutil lookup failed
+    gets a transient wait-only identity for this run and is retried next time.
+    A stored identity is never overwritten.
+    """
+    stored = stored_volume_identities(conn)
+    if stored is not None:
+        return stored
+    result = {"source": volume_identity(source, diskutil), "destination": volume_identity(dest, diskutil)}
+    if all(item["uuid"] is not None or item["network"] for item in result.values()):
+        conn.execute("insert or ignore into config values('volume_identities', ?)", (json.dumps(result),))
+        conn.commit()
+        return stored_volume_identities(conn) or result
     return result

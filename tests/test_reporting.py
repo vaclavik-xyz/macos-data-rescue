@@ -322,3 +322,52 @@ def test_pdf_section_stays_with_its_first_table_row():
     assert len(canvas.pages) == 2
     assert 'Library data' in '\n'.join(canvas.pages[1])
     assert 'Caches' in '\n'.join(canvas.pages[1])
+
+
+def record_storage_events(job_dir: Path, *kinds: str) -> None:
+    from macos_data_rescue.manifest import connect
+    from macos_data_rescue.storage_events import record_event
+
+    conn = connect(job_dir)
+    try:
+        for kind in kinds:
+            record_event(conn, kind, detail={"reason": "Storage | unavailable"})
+    finally:
+        conn.close()
+
+
+def test_report_lists_storage_events(tmp_path: Path) -> None:
+    write_file(tmp_path / "source-home" / "a", b"a")
+    job_dir, _, _ = init_and_scan(tmp_path)
+    markdown = run_cli("report", "--job-dir", str(job_dir), "--format", "markdown").stdout
+    assert "## Storage events" not in markdown
+    assert "storage_losses" not in run_cli("status", "--job-dir", str(job_dir)).stdout
+
+    record_storage_events(job_dir, "lost", "cooldown", "resumed", "lost")
+    markdown = run_cli("report", "--job-dir", str(job_dir), "--format", "markdown").stdout
+    payload = json.loads(run_cli("report", "--job-dir", str(job_dir), "--format", "json").stdout)
+
+    assert "## Storage events" in markdown
+    assert "| Time | Role | Kind | Detail |" in markdown
+    assert "Storage \\| unavailable" in markdown
+    assert [event["kind"] for event in payload["storage_events"]] == ["lost", "cooldown", "resumed", "lost"]
+    assert "storage_losses=2" in run_cli("status", "--job-dir", str(job_dir)).stdout
+
+
+@pytest.mark.parametrize("language, expected", [
+    ("en", "Disk disconnections during the rescue: 2."),
+    ("cs", "Počet odpojení disku během záchrany: 2."),
+])
+def test_customer_report_mentions_disconnects_only_when_present(tmp_path: Path, language, expected) -> None:
+    from macos_data_rescue.reporting import customer_markdown_report, customer_pdf_bytes, customer_report_text
+
+    write_file(tmp_path / "source-home" / "a", b"a")
+    job_dir, _, _ = init_and_scan(tmp_path)
+    text = customer_report_text(language)
+    assert expected not in customer_markdown_report(job_dir, text)
+    pdf_without = customer_pdf_bytes(job_dir, text)
+
+    record_storage_events(job_dir, "lost", "resumed", "lost", "resumed")
+
+    assert expected in customer_markdown_report(job_dir, text)
+    assert len(customer_pdf_bytes(job_dir, text)) > len(pdf_without)

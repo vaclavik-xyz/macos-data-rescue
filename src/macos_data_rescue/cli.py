@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import signal
 import sys
 from pathlib import Path
 
@@ -12,8 +13,10 @@ from .errors import RescueError
 from .guide import next_text
 from .manifest import GATED_PHASES, init_manifest, record_approval
 from .preflight import preflight_job
+from .reconnect import ReconnectPolicy
 from .reporting import CUSTOMER_REPORT_LANGUAGES, report, status_text, write_customer_report
 from .scanner import scan_job
+from .storage_events import ReconnectLimits
 from .verification import verify_job
 
 
@@ -127,6 +130,18 @@ def add_copy_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--limit", type=positive_int)
     parser.add_argument("--path", help="Failed manifest path to recover from an explicitly selected duplicate.")
     parser.add_argument("--fallback-from", help="Alternate source-relative file; requires --path.")
+    defaults = ReconnectPolicy()
+    parser.add_argument("--auto-reconnect", action="store_true",
+                        help="After a storage loss wait, cool down, remount the recorded volume "
+                             "(source read-only) and resume, within hard limits.")
+    parser.add_argument("--reconnect-cooldown", default=defaults.cooldown, type=non_negative_float, metavar="SECONDS",
+                        help="Seconds to leave the disk alone after a loss (default %(default)g).")
+    parser.add_argument("--reconnect-wait", default=defaults.wait, type=positive_float, metavar="SECONDS",
+                        help="Seconds to wait for the volume after the cooldown (default %(default)g).")
+    parser.add_argument("--max-reconnects", default=defaults.limits.max_reconnects, type=positive_int, metavar="N",
+                        help="Successful reconnects allowed since the last acknowledgement (default %(default)d).")
+    parser.add_argument("--acknowledge-storage-loss", action="store_true",
+                        help="Acknowledge an earlier auto-reconnect give-up so the loop may run again.")
 
 
 def positive_float(value: str) -> float:
@@ -134,6 +149,17 @@ def positive_float(value: str) -> float:
     if not math.isfinite(parsed) or parsed <= 0:
         raise argparse.ArgumentTypeError("must be a finite number greater than zero")
     return parsed
+
+
+def non_negative_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("must be a finite number zero or greater")
+    return parsed
+
+
+def raise_keyboard_interrupt(signum, frame):
+    raise KeyboardInterrupt
 
 
 def positive_int(value: str) -> int:
@@ -162,14 +188,30 @@ def main(argv: list[str] | None = None) -> int:
             if summary.issues:
                 return 1
         elif args.command in {"copy", "resume"}:
-            summary = copy_job(
-                args.job_dir,
-                phase=args.phase,
-                timeout=args.timeout,
-                limit=args.limit,
-                path=args.path,
-                fallback_from=args.fallback_from,
-            )
+            reconnect = (ReconnectPolicy(cooldown=args.reconnect_cooldown, wait=args.reconnect_wait,
+                                         limits=ReconnectLimits(max_reconnects=args.max_reconnects))
+                         if args.auto_reconnect else None)
+            # SIGTERM (GUI stop) takes the same path as Ctrl-C: an operator
+            # stop while waiting for storage, or an interrupted copy pass.
+            previous = signal.signal(signal.SIGTERM, raise_keyboard_interrupt)
+            try:
+                summary = copy_job(
+                    args.job_dir,
+                    phase=args.phase,
+                    timeout=args.timeout,
+                    limit=args.limit,
+                    path=args.path,
+                    fallback_from=args.fallback_from,
+                    reconnect=reconnect,
+                    acknowledge_storage_loss=args.acknowledge_storage_loss,
+                )
+            except KeyboardInterrupt:
+                print("interrupted", file=sys.stderr)
+                return 130
+            finally:
+                signal.signal(signal.SIGTERM, previous)
+            for note in summary.notes:
+                print(f"note: {note}")
             print(summary.as_line())
             if summary.paused:
                 return 3

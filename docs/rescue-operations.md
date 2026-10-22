@@ -37,11 +37,41 @@ pending without consuming a retry. Reconnect the original disks or free space,
 then use `resume` with the same options. `next` explains the paused state.
 Read-only directory identity probes run in the bounded worker before each file.
 Recorded source/destination ancestor paths and inodes prevent silently recreating
-an absent mount directory. These are practical outage guards, not a volume UUID
-identity certificate: the operator must reconnect the original disks. Keep the
-job directory on a reliable local disk; loss of the job disk itself prevents
-persisting a pause reason. Existing path validation and destination setup still
+an absent mount directory. Keep the job directory on a reliable local disk; loss
+of the job disk itself prevents persisting a pause reason.
+
+With the opt-in `--auto-reconnect`, the same invocation instead waits, cools the
+disk down, remounts the recorded volume (source read-only, plain unmount only,
+destination never unmounted), checks the recorded Volume UUID at the recorded
+mount point plus the inode anchors, and resumes the same selection under the
+existing job lock. Persisted `storage_events` drive hard limits that end in an
+imaging/escalation recommendation; see "Overnight runs and automatic reconnect"
+in `docs/agent-runbook.md`. A second loss while the same file is read marks it
+`failed` ("storage lost twice while reading this file"). SIGTERM is handled like
+Ctrl-C: while waiting it records `stopped` and exits 3; during a copy pass the
+activity becomes `interrupted` and the command exits 130. Existing path validation and destination setup still
 involve parent-process filesystem calls and remain subject to kernel I/O hangs.
+
+## Volume identity
+
+The first `copy`/`resume --auto-reconnect` that finds storage available records
+the source and destination volume identity (`diskutil info -plist` of the mount
+point: Volume UUID, mount point, filesystem type, network flag, read-only flag)
+in the manifest `config` key `volume_identities`. It is recorded once and never
+overwritten. Network filesystems (`smbfs`, `afpfs`, `nfs`, `webdav`) and volumes
+without a UUID are only ever waited for. A local volume whose lookup failed or
+timed out is not recorded as UUID-less; that run treats it as wait-only and the
+next run retries the lookup. Every `diskutil` call has a timeout (default 60 s).
+
+Open verification item (not yet tested on hardware): whether
+`diskutil mount readOnly <VolumeUUID>` on an unmounted APFS or HFS+ volume can
+make DiskArbitration run a filesystem check or repair (`fsck_apfs`/`fsck_hfs`)
+before mounting. What is known: macOS checks volumes it considers dirty before
+mounting them, and a read-only mount request is the safest mount path `diskutil`
+offers; whether that request also suppresses a repair pass has not been verified
+on a spare disk. Until it is, treat an automatic remount of a failing source as
+possibly triggering a check and prefer imaging (`ddrescue`) for disks that keep
+dropping off the bus.
 
 ## Isolated scan I/O
 

@@ -314,3 +314,60 @@ def test_next_requires_approval_before_resuming_legacy_gated_cursor(tmp_path: Pa
     assert f"approve --job-dir {job_dir} --phase app-data" in blocked.stdout
     assert f"scan --job-dir {job_dir} --phase app-data" not in blocked.stdout
     assert "action=scan phase=app-data reason=resume-interrupted-scan" in unblocked.stdout
+
+
+def storage_job(tmp_path: Path):
+    from macos_data_rescue.activity import Activity
+    from macos_data_rescue.manifest import connect
+
+    job_dir, _, _ = init_customer_job(tmp_path)
+    run_cli("scan", "--job-dir", str(job_dir), "--phase", "visible-home")
+    conn = connect(job_dir)
+    return job_dir, conn, Activity(conn, "copy", "visible-home")
+
+
+def test_next_recommends_imaging_after_give_up(tmp_path: Path) -> None:
+    from macos_data_rescue.storage_events import record_event
+
+    job_dir, conn, activity = storage_job(tmp_path)
+    reason = "storage did not come back within 1800 seconds; stop file-level copying"
+    record_event(conn, "gave-up", detail={"reason": reason})
+    activity.finish("paused", reason)
+    conn.close()
+
+    lines = run_cli("next", "--job-dir", str(job_dir)).stdout.splitlines()
+
+    assert f"state: storage-escalation ({reason})" in lines
+    text = "\n".join(lines)
+    assert "ddrescue" in text and "mapfile" in text
+    guarded = lines.index("only if the technician decides to continue file-level copying:")
+    assert "--auto-reconnect --acknowledge-storage-loss" in lines[guarded + 1]
+    assert not any("uv run" in line for line in lines[:guarded])
+
+
+def test_next_after_acknowledged_give_up_is_plain_pause(tmp_path: Path) -> None:
+    from macos_data_rescue.storage_events import acknowledge, record_event
+
+    job_dir, conn, activity = storage_job(tmp_path)
+    record_event(conn, "gave-up", detail={"reason": "x"})
+    acknowledge(conn)
+    activity.finish("paused", "Storage unavailable")
+    conn.close()
+
+    assert "state: paused (Storage unavailable)" in run_cli("next", "--job-dir", str(job_dir)).stdout
+
+
+def test_next_waiting_has_no_command(tmp_path: Path) -> None:
+    import time
+
+    from macos_data_rescue.locking import job_lock
+
+    job_dir, conn, activity = storage_job(tmp_path)
+    activity.wait({"phase": "cooldown", "until": time.time() + 300, "attempt": 2, "reason": "Storage unavailable"})
+    with job_lock(job_dir):
+        result = run_cli("next", "--job-dir", str(job_dir))
+    conn.close()
+
+    assert "state: waiting-for-storage" in result.stdout
+    assert "attempt=2" in result.stdout
+    assert "uv run" not in result.stdout

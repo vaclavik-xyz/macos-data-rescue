@@ -9,13 +9,22 @@ import os
 import stat
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .activity import Activity
-from .storage import StoragePaused, load_anchors
+from .storage import (
+    StoragePaused,
+    load_anchors,
+    load_volume_identities,
+    stored_volume_identities,
+    wait_only_identities,
+)
 from .errors import RescueError
+from .reconnect import ReconnectGaveUp, Reconnector, ReconnectPolicy
+from .storage_events import acknowledge, blocked_by_give_up, record_event
+from .volumes import Diskutil
 from .locking import exclusive_job
 from .manifest import (
     COPIED_STATUSES,
@@ -44,6 +53,12 @@ XATTR_SHOWCOMPRESSION = 0x0020
 XATTR_NOFOLLOW = 0x0001
 XATTR_SKIP_NAMES = frozenset({"com.apple.quarantine", "com.apple.macl", "com.apple.decmpfs"})
 XATTR_WARNING_PREFIX = "extended attributes not fully preserved"
+AUTO_RECONNECT_BLOCKED = "auto-reconnect disabled until --acknowledge-storage-loss"
+STOPPED_WHILE_WAITING = "stopped while waiting for storage"
+LOST_TWICE_ERROR = "storage lost twice while reading this file"
+# Probes during the reconnect wait stay short even with a long per-file timeout.
+RECONNECT_PROBE_TIMEOUT = 60.0
+DESTINATION_FULL_REASON = "Destination is full or its quota is exhausted; free space and resume."
 
 
 @dataclass
@@ -56,6 +71,10 @@ class CopySummary:
     timed_out: int = 0
     skipped: int = 0
     paused: str | None = None
+    reconnects: int = 0
+    # bytes of newly copied files; feeds the zero-progress reconnect limit
+    copied_bytes: int = 0
+    notes: list[str] = field(default_factory=list)
 
     def as_line(self) -> str:
         return (
@@ -63,15 +82,27 @@ class CopySummary:
             f"timed_out={self.timed_out} skipped={self.skipped} "
             f"copied_from_fallback={self.copied_from_fallback} "
             f"{UNREADABLE_COMPRESSED}={self.unreadable_compressed}"
+            + (f" reconnects={self.reconnects}" if self.reconnects else "")
             + (f" paused={self.paused}" if self.paused else "")
         )
 
 
+@dataclass
+class PassState:
+    """Selection budget shared by every copy pass of one invocation."""
+    attempted: int = 0
+    handled_ids: set[int] = field(default_factory=set)
+
+
 @exclusive_job
 def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = None,
-             path: str | None = None, fallback_from: str | None = None) -> CopySummary:
+             path: str | None = None, fallback_from: str | None = None,
+             reconnect: ReconnectPolicy | None = None, acknowledge_storage_loss: bool = False,
+             diskutil: Diskutil | None = None) -> CopySummary:
     if (path is None) != (fallback_from is None):
         raise RescueError("--path and --fallback-from must be supplied together")
+    if reconnect is not None and path is not None:
+        raise RescueError("--auto-reconnect cannot be combined with --path")
     config = load_config(job_dir)
     if config.profile == "customer-home":
         blocked = unapproved_gated_phases(job_dir, phase)
@@ -85,66 +116,58 @@ def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = N
             validate_application_layout(config)
     migrate_manifest(job_dir)
     summary = CopySummary()
-    attempted = 0
-    handled_ids: set[int] = set()
+    state = PassState()
     conn = connect(job_dir)
     worker = CopyWorker()
     activity = Activity(conn, "copy", phase)
     worker.progress = activity.progress
     try:
+        if acknowledge_storage_loss:
+            acknowledge(conn)
+        if reconnect is not None and blocked_by_give_up(conn):
+            reconnect = None
+            summary.notes.append(AUTO_RECONNECT_BLOCKED)
+        if reconnect is not None and diskutil is None:
+            diskutil = Diskutil()
         worker.anchors = load_anchors(conn, config.source, config.dest)
-        worker.check_storage(timeout)
-        cleanup_stale_temps(job_dir, phase, config.dest)
-        if path is not None:
-            row = conn.execute("select * from files where relative_path = ?", (path,)).fetchone()
-            if row is None or row["kind"] != "file" or row["status"] not in ("failed", "timed_out", UNREADABLE_COMPRESSED):
-                raise RescueError("--path must name a failed, timed-out, or unreadable compressed regular file")
-            if phase != "all" and row["phase"] != phase:
-                raise RescueError("--path is outside the selected phase")
-            # A mapping is an explicit operator choice, never a filename/size guess.
+        identities = None
+        lost_file_id = None
+        bytes_at_resume = 0
+        while True:
             try:
-                fallback_source(config.source, fallback_from)
-                if fallback_from == path:
-                    raise ValueError("fallback must name a different source file")
-            except ValueError as exc:
-                raise RescueError(str(exc)) from exc
-            conn.execute("update files set fallback_source_path = ?, fallback_mtime_ns = null, "
-                         "fallback_original_error = coalesce(fallback_original_error, error) where id = ?",
-                         (fallback_from, row["id"]))
-            conn.commit()
-            row = conn.execute("select * from files where id = ?", (row["id"],)).fetchone()
-            process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker, activity=activity)
-            return summary
-        for row in iter_selected_files(job_dir, phase, statuses=WORK_STATUSES):
-            if limit is not None and attempted >= limit:
+                worker.check_storage(timeout)
+                if reconnect is not None:
+                    # only after a successful probe: a vanished mount would
+                    # otherwise resolve to the boot volume
+                    identities = load_volume_identities(conn, config.source, config.dest, diskutil)
+                cleanup_stale_temps(job_dir, phase, config.dest)
+                copy_pass(job_dir, config, phase, timeout, limit, path, fallback_from, summary, state,
+                          conn=conn, worker=worker, activity=activity)
                 break
-            process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker, activity=activity)
-            handled_ids.add(int(row["id"]))
-            attempted += 1
-
-        if limit is not None and attempted >= limit:
-            return summary
-
-        for row in iter_selected_files(job_dir, phase, statuses=DONE_STATUSES):
-            if int(row["id"]) in handled_ids:
-                continue
-            try:
-                dest = resolve_relative_path(config.dest, row["relative_path"], kind=row["kind"])
-            except ValueError:
-                if limit is not None and attempted >= limit:
+            except StoragePaused as exc:
+                if reconnect is None or not exc.reconnectable:
+                    summary.paused = str(exc)
                     break
-                process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker, activity=activity)
-                handled_ids.add(int(row["id"]))
-                attempted += 1
-                continue
-            if row["status"] == "skipped" or destination_matches(dest, row):
-                summary.skipped += 1
-                continue
-            if limit is not None and attempted >= limit:
-                break
-            process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker, activity=activity)
-            handled_ids.add(int(row["id"]))
-            attempted += 1
+                if exc.file_id is not None and exc.file_id == lost_file_id:
+                    fail_lost_twice(job_dir, exc.file_id, summary, state, conn=conn)
+                lost_file_id = exc.file_id
+                reconnector = Reconnector(
+                    conn, identities or stored_volume_identities(conn) or wait_only_identities(),
+                    lambda: worker.check_storage(min(timeout, RECONNECT_PROBE_TIMEOUT)),
+                    reconnect, diskutil, on_wait=activity.wait)
+                try:
+                    reconnector.recover(str(exc), summary.copied_bytes - bytes_at_resume)
+                except ReconnectGaveUp as gave_up:
+                    summary.paused = str(gave_up)
+                    break
+                except KeyboardInterrupt:
+                    # SIGINT/SIGTERM while waiting is an operator stop, not a give-up
+                    record_event(conn, "stopped")
+                    summary.paused = STOPPED_WHILE_WAITING
+                    break
+                summary.reconnects += 1
+                bytes_at_resume = summary.copied_bytes
+                activity.resume_running()
     except StoragePaused as exc:
         summary.paused = str(exc)
     except BaseException:
@@ -152,12 +175,83 @@ def copy_job(job_dir: Path, *, phase: str, timeout: float, limit: int | None = N
         raise
     finally:
         try:
-            if activity.data["state"] == "running":
+            if activity.data["state"] in ("running", "waiting"):
                 activity.finish("paused" if summary.paused else "finished", summary.paused)
         finally:
             worker.close()
             conn.close()
     return summary
+
+
+def fail_lost_twice(job_dir: Path, file_id: int, summary: CopySummary, state: PassState, *, conn) -> None:
+    # The pause already returned the row to pending and refunded the attempt;
+    # this second loss on the same file keeps the read attempt consumed so a
+    # bad region cannot pin the whole night to one file. It stays retryable.
+    mark_result(job_dir, file_id, "failed", error=LOST_TWICE_ERROR, conn=conn)
+    conn.execute("update files set attempts = attempts + 1 where id = ?", (file_id,))
+    conn.commit()
+    summary.failed += 1
+    state.handled_ids.add(file_id)
+    state.attempted += 1
+
+
+def copy_pass(job_dir: Path, config, phase: str, timeout: float, limit: int | None, path: str | None,
+              fallback_from: str | None, summary: CopySummary, state: PassState, *, conn, worker: CopyWorker,
+              activity: Activity) -> None:
+    """One pass over the selection; raises StoragePaused when storage is lost."""
+    if path is not None:
+        row = conn.execute("select * from files where relative_path = ?", (path,)).fetchone()
+        if row is None or row["kind"] != "file" or row["status"] not in ("failed", "timed_out", UNREADABLE_COMPRESSED):
+            raise RescueError("--path must name a failed, timed-out, or unreadable compressed regular file")
+        if phase != "all" and row["phase"] != phase:
+            raise RescueError("--path is outside the selected phase")
+        # A mapping is an explicit operator choice, never a filename/size guess.
+        try:
+            fallback_source(config.source, fallback_from)
+            if fallback_from == path:
+                raise ValueError("fallback must name a different source file")
+        except ValueError as exc:
+            raise RescueError(str(exc)) from exc
+        conn.execute("update files set fallback_source_path = ?, fallback_mtime_ns = null, "
+                     "fallback_original_error = coalesce(fallback_original_error, error) where id = ?",
+                     (fallback_from, row["id"]))
+        conn.commit()
+        row = conn.execute("select * from files where id = ?", (row["id"],)).fetchone()
+        process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker, activity=activity)
+        return
+    for row in iter_selected_files(job_dir, phase, statuses=WORK_STATUSES):
+        if limit is not None and state.attempted >= limit:
+            break
+        # rows handled by an earlier pass of this invocation are not retried
+        if int(row["id"]) in state.handled_ids:
+            continue
+        process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker, activity=activity)
+        state.handled_ids.add(int(row["id"]))
+        state.attempted += 1
+
+    if limit is not None and state.attempted >= limit:
+        return
+
+    for row in iter_selected_files(job_dir, phase, statuses=DONE_STATUSES):
+        if int(row["id"]) in state.handled_ids:
+            continue
+        try:
+            dest = resolve_relative_path(config.dest, row["relative_path"], kind=row["kind"])
+        except ValueError:
+            if limit is not None and state.attempted >= limit:
+                break
+            process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker, activity=activity)
+            state.handled_ids.add(int(row["id"]))
+            state.attempted += 1
+            continue
+        if row["status"] == "skipped" or destination_matches(dest, row):
+            summary.skipped += 1
+            continue
+        if limit is not None and state.attempted >= limit:
+            break
+        process_row(job_dir, config.source, config.dest, row, timeout, summary, conn=conn, worker=worker, activity=activity)
+        state.handled_ids.add(int(row["id"]))
+        state.attempted += 1
 
 
 def process_row(
@@ -229,7 +323,7 @@ def process_row(
         # A storage outage does not consume this file's retry allowance.
         conn.execute("update files set attempts = max(0, attempts - 1) where id = ?", (row["id"],))
         conn.commit()
-        raise StoragePaused(str(pause))
+        raise StoragePaused(str(pause), reconnectable=pause != DESTINATION_FULL_REASON, file_id=int(row["id"]))
     if activity is not None:
         activity.completed(int(result.get("copied_bytes", 0)))
     if status == "copied":
@@ -244,6 +338,7 @@ def process_row(
             warning=combine_warnings(scan_warning, result.get("warning")),
             conn=conn,
         )
+        summary.copied_bytes += copied_bytes
         if fallback:
             summary.copied_from_fallback += 1
         else:
@@ -860,7 +955,7 @@ def fsync_directory(path: Path) -> None:
 
 def storage_error_reason(exc):
     if isinstance(exc, OSError) and exc.errno in (errno.ENOSPC, errno.EDQUOT):
-        return "Destination is full or its quota is exhausted; free space and resume."
+        return DESTINATION_FULL_REASON
     if isinstance(exc, OSError) and exc.errno in (errno.ENODEV, errno.ENXIO):
         return "Storage device disconnected; reconnect the original disk and resume."
     return None

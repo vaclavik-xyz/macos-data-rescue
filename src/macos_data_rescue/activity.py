@@ -5,9 +5,15 @@ import fcntl
 import json
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .manifest import connect, utc_now
+
+
+WAIT_KEYS = ("wait_phase", "wait_until", "attempt")
+# states only meaningful while a writer holds the job lock
+LIVE_STATES = ("running", "waiting")
 
 
 class Activity:
@@ -39,7 +45,22 @@ class Activity:
         self.progress(count)
         self.completed_bytes += count
 
+    def wait(self, info: dict) -> None:
+        """Waiting for storage after a loss (reconnect cooldown or wait phase)."""
+        until = datetime.fromtimestamp(info["until"], timezone.utc).isoformat(timespec="seconds")
+        self.data.update(state="waiting", reason=info.get("reason"), wait_phase=info.get("phase"),
+                         wait_until=until, attempt=info.get("attempt"), current_bytes=0)
+        self.save()
+
+    def resume_running(self) -> None:
+        for key in WAIT_KEYS:
+            self.data.pop(key, None)
+        self.data.update(state="running", reason=None)
+        self.save()
+
     def finish(self, state="finished", reason=None):
+        for key in WAIT_KEYS:
+            self.data.pop(key, None)
         self.data.update(state=state, reason=reason, finished_at=utc_now())
         self.save()
 
@@ -66,7 +87,7 @@ def activity_snapshot(job_dir: Path) -> dict:
         if not row:
             return {}
         data = json.loads(row[0])
-        if data["state"] == "running" and not writer_running(job_dir):
+        if data["state"] in LIVE_STATES and not writer_running(job_dir):
             data["state"] = "interrupted"
         phase = data["phase"]
         row = conn.execute("select count(*), coalesce(sum(size), 0) from files where kind = 'file' "
@@ -90,7 +111,10 @@ def activity_text(job_dir: Path) -> str:
             f"transferred_GB={data['transferred_bytes'] / 1e9:.3f} "
             f"MB/s={data['rate_bytes_s'] / 1e6:.2f} remaining_files={data['remaining_files']} "
             f"remaining_GB={data['remaining_bytes'] / 1e9:.3f} eta_seconds={data['eta_seconds']} "
-            f"reason={json.dumps(data.get('reason'))} (remaining = known manifest queue)")
+            f"reason={json.dumps(data.get('reason'))}"
+            + (f" wait_phase={data.get('wait_phase')} wait_until={data.get('wait_until')} attempt={data.get('attempt')}"
+               if data["state"] == "waiting" else "")
+            + " (remaining = known manifest queue)")
 
 
 def watch_status(job_dir: Path, *, interval: float, count: int | None = None):
