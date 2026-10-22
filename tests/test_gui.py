@@ -39,6 +39,7 @@ def test_gui_cli_argument_parser() -> None:
 def test_logic_modules_do_not_import_tkinter() -> None:
     code = ("import sys\nimport macos_data_rescue.gui, macos_data_rescue.gui.runner, macos_data_rescue.gui.monitor\n"
             "import macos_data_rescue.gui.state, macos_data_rescue.gui.commands, macos_data_rescue.gui.i18n\n"
+            "import macos_data_rescue.gui.status, macos_data_rescue.gui.palette\n"
             "assert 'tkinter' not in sys.modules, 'tkinter imported'\n")
     subprocess.run([sys.executable, "-c", code], check=True, timeout=30)
 
@@ -66,12 +67,13 @@ def test_translations_are_complete() -> None:
         used |= set(re.findall(r'"(log_stop_[a-z]+)"', text))
         used |= set(re.findall(r'\btr\(\s*"([a-z_]+)"', text))
         # keys kept in tuples and passed on (labels, validation errors, dialogs)
-        used |= set(re.findall(r'"((?:err|field|confirm|msg|log|state|btn|reconnect|max)_[a-z_]+)"', text))
+        used |= set(re.findall(r'"((?:err|field|confirm|msg|log|state|btn|reconnect|max|status|do|badge)_[a-z_]+)"',
+                               text))
     used |= {item.badge_key for item in STATE_INFO.values()}
     used |= {item.message_key for item in STATE_INFO.values() if item.message_key}
     missing = sorted(key for key in used if key not in MESSAGES["cs"])
     assert not missing, missing
-    assert tr("state_paused_storage", "en") == "PAUSED – STORAGE"
+    assert tr("state_paused_storage", "en") == "Paused"
     assert "znovu připojte původní disk" in tr("msg_paused_storage", "cs")
 
 
@@ -152,6 +154,7 @@ def test_guided_rescue_flow_through_real_cli(root, dialogs, tmp_path: Path, monk
     assert disabled(app.btn_init) and disabled(app.btn_open_job) and disabled(app.btn_preflight)
     pump(root, lambda: app.snapshot is not None)
     assert app.job_dir == job_dir and app.state is OpState.IDLE
+    assert app.notebook.select() == str(app.tab_rescue), "a created job opens on the rescue tab"
     levels = {app.preflight_tree.item(i, "tags")[0] for i in app.preflight_tree.get_children()}
     assert "ok" in levels and "fail" not in levels
     entry = app.path_widgets["source"][1]
@@ -159,16 +162,18 @@ def test_guided_rescue_flow_through_real_cli(root, dialogs, tmp_path: Path, monk
 
     # unscanned visible-home: the guide runs preflight + scan
     assert app._guide_action().spec.args[:5] == ("scan", "--job-dir", str(job_dir), "--phase", "visible-home")
+    assert app.btn_guide.winfo_manager() == "grid" and app.btn_guide.cget("text") == "Skenovat: viditelná data"
     app.execute_recommended_step()
     assert app.state is OpState.RUNNING
     assert disabled(app.btn_scan) and disabled(app.btn_approve) and disabled(app.btn_close_job)
     assert disabled(app.btn_guide) and not disabled(app.btn_stop)
+    assert app.btn_guide.winfo_manager() == "" and app.status_headline.cget("text") == "Skenuji · viditelná data"
     assert str(app.phase_combo.cget("state")) == "disabled"
     finish(app, root, OpState.DONE)
     pump(root, lambda: app._guide_action().kind == "run" and app._guide_action().spec.subcommand == "copy")
     app.execute_recommended_step()
     finish(app, root, OpState.DONE)
-    pump(root, lambda: app.badges["badge_copied"].cget("text") == "Zkopírováno: 1")
+    pump(root, lambda: app.counters["badge_copied"].cget("text") == "Zkopírováno 1")
     assert (dest / "Desktop" / "doc.txt").read_bytes() == b"content"
 
     # hidden-home is still unscanned, then the gated phases come up
@@ -199,8 +204,8 @@ def test_guided_rescue_flow_through_real_cli(root, dialogs, tmp_path: Path, monk
     pump(root, lambda: (app.snapshot.approvals.get("app-data") or "").endswith("by=Jana Nováková"))
 
     app.set_language("en")
-    assert app.badges["badge_copied"].cget("text") == "Copied: 1"
-    assert app.state_badge.cget("text") == "DONE"
+    assert app.counters["badge_copied"].cget("text") == "Copied 1"
+    assert app.state_badge.cget("text") == "Done"
     assert "Setup" in app.notebook.tab(0, "text")
 
     app.cust_format_var.set("markdown")
@@ -224,9 +229,12 @@ def test_storage_pause_offers_resume_with_same_options(root, dialogs, tmp_path: 
     app.state = OpState.RUNNING
     app.events.put(RunFinished((CommandSpec(("preflight",)), copy), 1, 3, False))
     pump(root, lambda: app.state is OpState.PAUSED_STORAGE)
-    assert app.state_badge.cget("text") == "POZASTAVENO – ÚLOŽIŠTĚ"
-    assert "znovu připojte původní disk" in app.banner_label.cget("text")
-    assert app.banner.winfo_manager() == "grid" and not disabled(app.btn_resume)
+    assert app.state_badge.cget("text") == "Pozastaveno"
+    assert app.status_headline.cget("text") == "Pozastaveno: úložiště nedostupné"
+    assert "znovu připojte původní disk" in app.status_body.cget("text")
+    # one primary action: Resume replaces the recommended-step button
+    assert app.btn_resume.winfo_manager() == "grid" and not disabled(app.btn_resume)
+    assert app.btn_guide.winfo_manager() == ""
     assert not disabled(app.btn_scan), "a paused job is idle; only the child process locks controls"
 
     started: list = []
@@ -260,7 +268,9 @@ def test_give_up_requires_confirmation_before_acknowledging(root, dialogs, tmp_p
     app = make_app(root, initial_job_dir=job_dir, lang="cs")
     pump(root, lambda: app.state is OpState.PAUSED_STORAGE and app.snapshot.storage_blocked)
     assert app._guide_action().kind == "acknowledge"
-    assert app.btn_guide.cget("text").startswith("Pokračovat po potvrzení: resume")
+    assert app.status_headline.cget("text") == "Disk se opakovaně odpojuje"
+    assert app.btn_resume.winfo_manager() == "grid" and app.btn_resume.cget("text") == "Přesto pokračovat…"
+    assert "storage-escalation" in app.detail_text.get("1.0", "end"), "raw next output stays in the details"
 
     started: list = []
     app.runner.start = lambda steps, keep_awake=False: started.append(list(steps))
@@ -298,8 +308,10 @@ def test_opening_paused_job_shows_storage_pause(root, dialogs, tmp_path: Path) -
     pump(root, lambda: app.state is OpState.PAUSED_STORAGE)
     assert app.source_var.get() == str(source.resolve())
     assert app.dest_var.get() == str(dest.resolve())
-    assert "Reason: source unavailable" in app.banner_label.cget("text")
-    assert app.badges["badge_pending"].cget("text") == "Pending: 1"
+    assert "Reason: source unavailable" in app.detail_text.get("1.0", "end")
+    assert "source unavailable" not in app.status_body.cget("text")
+    assert app.counters["badge_pending"].cget("text") == "Pending 1"
+    assert app.notebook.select() == str(app.tab_rescue)
     assert app.path_widgets["dest"][1].instate(["readonly"])
 
 
@@ -319,7 +331,7 @@ def test_opening_another_job_resets_per_job_state(root, dialogs, tmp_path: Path)
     app._open_job(job_b)
     pump(root, lambda: app.job_dir == job_b and app.snapshot is not None)
     assert app.state is OpState.IDLE
-    assert app.banner.winfo_manager() == ""
+    assert app.btn_resume.winfo_manager() == "" and app.status_headline.cget("text") == "Ready"
     assert app.last_copy_spec is None and app.last_customer_report_path is None
     assert disabled(app.btn_open_report) and disabled(app.btn_resume)
 
@@ -380,9 +392,9 @@ def test_waiting_for_disk_state_and_stop_waiting(root, dialogs, tmp_path: Path) 
     source.rename(source.with_name("unplugged"))
     app._start([cmd_copy(job_dir, reconnect)])
     pump(root, lambda: app.state is OpState.WAITING)
-    assert app.state_badge.cget("text") == "ČEKÁ NA DISK"
-    banner = app.banner_label.cget("text")
-    assert "Chladnutí disku: zbývá" in banner and "(pokus 1)" in banner
+    assert app.state_badge.cget("text") == "Čeká na disk"
+    headline = app.status_headline.cget("text")
+    assert headline.startswith("Chladnutí disku — ") and headline.endswith("(pokus 1)")
     assert app.btn_stop.cget("text") == "Zastavit čekání" and not disabled(app.btn_stop)
     assert disabled(app.btn_copy) and disabled(app.btn_guide) and disabled(app.chk_auto_reconnect)
     assert app.lbl_storage.cget("text") == "Odpojení disku: 1 · automaticky obnoveno: 0"
@@ -391,7 +403,7 @@ def test_waiting_for_disk_state_and_stop_waiting(root, dialogs, tmp_path: Path) 
     assert app.state is OpState.STOPPING
     finish(app, root, OpState.PAUSED_STORAGE)
     assert app._last_finish.returncode == 3 and app._last_finish.stop_requested
-    assert "znovu připojte původní disk" in app.banner_label.cget("text"), "a plain stop is no escalation"
+    assert "znovu připojte původní disk" in app.status_body.cget("text"), "a plain stop is no escalation"
     assert [c[0] for c in dialogs] == ["askyesno"], "only the stop confirmation, no acknowledgement"
     assert "Zastavit čekání na disk?" in dialogs[0][1][1]
     pump(root, lambda: app.snapshot is not None and app.snapshot.activity.get("state") == "paused")
@@ -402,3 +414,47 @@ def cmd_copy(job_dir: Path, reconnect):
     from macos_data_rescue.gui.commands import copy_spec
 
     return copy_spec(job_dir, "all", 30.0, reconnect=reconnect)
+
+
+@pytest.mark.parametrize("lang", ["cs", "en"])
+def test_window_keeps_its_size_with_every_section_open(root, dialogs, tmp_path: Path, lang: str) -> None:
+    from macos_data_rescue.gui.app import WINDOW_SIZE
+
+    source = tmp_path / "home"
+    write_file(source / "Desktop" / "a.txt", b"a")
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+    app = make_app(root, initial_job_dir=job_dir, lang=lang)
+    pump(root, lambda: app.snapshot is not None)
+    assert not app.advanced_disclosure.expanded and not app.log_disclosure.expanded
+    assert app.auto_reconnect_var.get() and app.lbl_reconnect_hint.cget("text").endswith(("zapnuto", "on"))
+    app._log("x" * 5000 + "\n" * 200)
+    app._current_file = "Documents/" + "very-long-folder-name/" * 40 + "file.pdf"
+    app._set_detail_text("detail " * 2000)
+    for disclosure in (app.detail_disclosure, app.advanced_disclosure, app.tech_disclosure):
+        disclosure.set_expanded(True)
+    app._set_state(OpState.PAUSED_STORAGE)
+    root.update_idletasks()
+    width, height = WINDOW_SIZE
+    assert root.winfo_reqwidth() <= width and root.winfo_reqheight() <= height
+    # the log and the options share the bottom of the tab
+    app.log_disclosure.set_expanded(True)
+    assert not app.advanced_disclosure.expanded
+    root.update_idletasks()
+    assert root.winfo_reqwidth() <= width and root.winfo_reqheight() <= height
+    app.set_language("en" if lang == "cs" else "cs")
+    root.update_idletasks()
+    assert root.winfo_reqheight() <= height
+
+
+def test_failure_opens_the_activity_log(root, dialogs, tmp_path: Path) -> None:
+    source = tmp_path / "home"
+    write_file(source / "Desktop" / "a.txt", b"a")
+    job_dir, _, _ = init_and_scan(tmp_path, source)
+    app = make_app(root, initial_job_dir=job_dir, lang="en")
+    pump(root, lambda: app.snapshot is not None)
+    copy = CommandSpec(("copy", "--job-dir", str(job_dir)))
+    app.state = OpState.RUNNING
+    app.events.put(RunFinished((copy,), 0, 1, False))
+    pump(root, lambda: app.state is OpState.FAILED)
+    assert app.log_disclosure.expanded
+    assert app.status_headline.cget("text") == "Operation failed"

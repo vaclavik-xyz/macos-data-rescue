@@ -73,15 +73,23 @@ uv run macos-data-rescue gui --lang cs          # or: uv run macos-data-rescue-g
 uv run macos-data-rescue gui --job-dir "/Volumes/RecoverySSD/Customer/.rescue"
 ```
 
-The console is a front end for the CLI, so every rule in this README and in [docs/agent-runbook.md](docs/agent-runbook.md) applies; read the runbook before working on real customer data. In addition:
+The console is a front end for the CLI, so every rule in this README and in [docs/agent-runbook.md](docs/agent-runbook.md) applies; read the runbook before working on real customer data.
+
+Layout: the header shows only the app name, the language and a status pill. There are three tabs: **Setup** (paths, profile, preflight), **Rescue** and **Results** (integrity verification, failed files and recovery from a duplicate, customer and technician reports). Creating or opening a job switches to **Rescue**, which reads top to bottom:
+
+- a status card with one headline (for example *Copying · visible-home*, *Waiting for the disk — 3m 02s (attempt 1)*, *Paused: storage unavailable*, *Done*), one sentence saying what to do and at most one primary button (the recommended step, **Resume**, or **Continue anyway…** after a reconnect give-up). The raw `next` output and the pause reason are under **Details**;
+- one data progress bar with a summary line (data, files, speed, time left), the current file, and one counter line in which only non-zero problem counts (timed out, failed, unreadable compression) are colored;
+- the phase, **Scan**, **Copy** and **Stop**. Per-file timeout, scan budget, file limit, the auto-reconnect values and "Keep the Mac awake" are under **Advanced** (collapsed; the auto-reconnect setting stays visible as a one-line hint). The **Activity log** is collapsed too and opens by itself when a command fails; Advanced and the log open one at a time so the window keeps its size.
+
+In addition:
 
 - `preflight` runs before `init` and again before every `scan`, `copy` and `resume`; a failed check stops the operation and is shown on the Setup tab.
 - An opened job shows its source, destination and profile read-only. While an operation runs, everything that could write to the job (init, preflight, consent, phase changes, another scan/copy) is locked.
-- The recommended-step button runs only `scan`, `copy`, `resume`, `verify`, `status`, `report` and `customer-report`. When `next` asks for consent, it opens the consent dialog instead, which requires the approving person's name and an explicit confirmation; consent is never recorded automatically.
+- The recommended-step button (the status card's primary button) runs only `scan`, `copy`, `resume`, `verify`, `status`, `report` and `customer-report`. When `next` asks for consent, it opens the consent dialog instead, which requires the approving person's name and an explicit confirmation; consent is never recorded automatically.
 - **Stop** interrupts the running command (SIGINT, then SIGTERM/SIGKILL if it does not exit). Committed progress stays in the manifest; continue with the recommended step. The console stays locked until the process has really exited.
 - Exit code 3 shows *storage unavailable*: reconnect the original disk (or free destination space), then press **Resume**, which reruns the paused copy with the same options after a fresh preflight.
-- **Automatically reconnect after disk loss** is on by default in the console and adds `--auto-reconnect` to copy, Resume and the recommended step (see [Automatic reconnect](#automatic-reconnect)); cooldown, wait and max-reconnects are passed only when changed from 300 / 1800 / 6. While the CLI waits, the console shows *Waiting for disk* with the cooldown or wait countdown, the attempt and the reason, plus the number of disk disconnections. **Stop waiting** is the normal graceful Stop: the run ends as a storage pause (exit 3), not as a failure, and needs no acknowledgement.
-- After the loop gives up, the console shows the escalation (image the disk with `ddrescue` or hand it to a lab). Resuming with auto-reconnect then requires an explicit confirmation before `--acknowledge-storage-loss` is passed; the recommended step never passes it on its own. Stopping during an active copy pass (exit 130) shows *stopped*; an exit 130 the operator did not request shows *failed*.
+- **Automatically reconnect after disk loss** is on by default in the console and adds `--auto-reconnect` to copy, Resume and the recommended step (see [Automatic reconnect](#automatic-reconnect)); cooldown, wait and max-reconnects are passed only when changed from 300 / 1800 / 6. While the CLI waits, the status card shows the cooldown or wait countdown and the attempt (the reason is under **Details**), and the progress section shows the number of disk disconnections. **Stop waiting** is the normal graceful Stop: the run ends as a storage pause (exit 3), not as a failure, and needs no acknowledgement.
+- After the loop gives up, the status card shows the escalation (image the disk with `ddrescue` or hand it to a lab) and its button becomes **Continue anyway…**. Resuming with auto-reconnect then requires an explicit confirmation before `--acknowledge-storage-loss` is passed; the recommended step never passes it on its own. Stopping during an active copy pass (exit 130) shows *stopped*; an exit 130 the operator did not request shows *failed*.
 - "Keep the Mac awake" runs `caffeinate -dims -w <pid>` bound to the running command only.
 
 ## CLI quick start
