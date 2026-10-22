@@ -246,10 +246,16 @@ class DataRescueApp:
         self.guide_group = ttk.LabelFrame(frame, padding=10)
         self.guide_group.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         self.guide_group.columnconfigure(0, weight=1)
-        self.guide_label = ttk.Label(self.guide_group, font=("Menlo", 11), wraplength=640, justify="left")
-        self.guide_label.grid(row=0, column=0, sticky="w", padx=4)
+        # fixed height with a scrollbar: an escalation text is long and must not
+        # push the progress and log sections out of the window
+        self.guide_text = tk.Text(self.guide_group, font=("Menlo", 11), wrap="word", height=5, width=40,
+                                  relief="flat", borderwidth=0, highlightthickness=0, state="disabled")
+        self.guide_text.grid(row=0, column=0, sticky="ew", padx=4)
+        guide_scroll = ttk.Scrollbar(self.guide_group, orient="vertical", command=self.guide_text.yview)
+        guide_scroll.grid(row=0, column=1, sticky="ns")
+        self.guide_text.configure(yscrollcommand=guide_scroll.set)
         self.btn_guide = ttk.Button(self.guide_group, command=self.execute_recommended_step)
-        self.btn_guide.grid(row=0, column=1, sticky="ne", padx=4)
+        self.btn_guide.grid(row=0, column=2, sticky="ne", padx=4)
 
         self.control_group = ttk.LabelFrame(frame, padding=10)
         self.control_group.grid(row=1, column=0, sticky="ew", pady=(0, 8))
@@ -800,13 +806,13 @@ class DataRescueApp:
 
     def _render_guide(self) -> None:
         if self.snapshot is None:
-            self.guide_label.configure(text=self._t("guide_default"))
+            self._set_guide_text(self._t("guide_default"))
             self.btn_guide.configure(text=self._t("btn_guide_none"))
             self._apply_controls()
             return
         lines = [line.strip().replace("uv run macos-data-rescue ", "")
                  for line in self.snapshot.guide_text.splitlines()[1:] if line.strip()]
-        self.guide_label.configure(text="\n".join(lines))
+        self._set_guide_text("\n".join(lines))
         action = self._guide_action()
         if action.kind == "run":
             label = self._t("btn_guide_run",
@@ -820,6 +826,14 @@ class DataRescueApp:
             label = self._t("btn_guide_none")
         self.btn_guide.configure(text=label)
         self._apply_controls()
+
+    def _set_guide_text(self, text: str) -> None:
+        if self.guide_text.get("1.0", "end-1c") == text:
+            return  # keep the operator's scroll position across polls
+        self.guide_text.configure(state="normal")
+        self.guide_text.delete("1.0", "end")
+        self.guide_text.insert("1.0", text)
+        self.guide_text.configure(state="disabled")
 
     @staticmethod
     def _phase_args(spec: CommandSpec) -> list[str]:
