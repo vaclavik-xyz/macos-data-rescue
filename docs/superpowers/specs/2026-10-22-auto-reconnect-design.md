@@ -137,8 +137,9 @@ New manifest table `storage_events` (timestamp, role source/dest, kind:
 `lost` / `cooldown` / `remount-attempt` / `remounted` / `resumed` / `gave-up` / `stopped` /
 `acknowledged`, detail). `stopped` (operator stop while waiting) is not a
 give-up and never blocks a later auto-reconnect. Reported in `report` (technician) and summarized in `status`.
-Customer report: one neutral line ("the source disk disconnected N times; the
-rescue resumed automatically") only if N > 0.
+Customer report: one neutral line ("Disk disconnections during the rescue: N.")
+only if N > 0; it makes no claim about resuming, because the loop may have
+stopped.
 
 ### Interfaces
 
