@@ -47,6 +47,8 @@ class JobSnapshot:
     storage_losses: int = 0
     reconnects: int = 0
     storage_blocked: bool = False
+    # manifest bytes per status (copied rows count their copied bytes)
+    byte_counts: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,7 @@ def read_job_snapshot(job_dir: Path) -> JobSnapshot:
         storage_losses=sum(1 for event in events if event["kind"] == "lost"),
         reconnects=sum(1 for event in events if event["kind"] == "resumed"),
         storage_blocked=storage_blocked,
+        byte_counts={status: item["bytes"] for status, item in summary.items()},
     )
 
 
@@ -172,11 +175,14 @@ class Telemetry:
     pause_reason: str | None = None
     storage_losses: int = 0
     reconnects: int = 0
+    # whole-manifest progress, consistent with the file counter; the activity's
+    # transferred/remaining bytes only describe the current copy invocation
+    rescued_bytes: int = 0
+    total_bytes: int = 0
 
     @property
     def bytes_fraction(self) -> float | None:
-        total = self.transferred_bytes + self.remaining_bytes
-        return self.transferred_bytes / total if total > 0 else None
+        return self.rescued_bytes / self.total_bytes if self.total_bytes > 0 else None
 
 
 BADGE_STATUSES: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -209,4 +215,6 @@ def telemetry_from(snapshot: JobSnapshot) -> Telemetry:
         pause_reason=activity.get("reason") if activity.get("state") == "paused" else None,
         storage_losses=snapshot.storage_losses,
         reconnects=snapshot.reconnects,
+        rescued_bytes=sum(snapshot.byte_counts.get(status, 0) for status in ("copied", "copied_from_fallback")),
+        total_bytes=sum(snapshot.byte_counts.values()),
     )

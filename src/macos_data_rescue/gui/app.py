@@ -783,10 +783,9 @@ class DataRescueApp:
             self.prog_bytes.configure(value=0)
             self.lbl_bytes.configure(text="—")
         else:
-            total = view.transferred_bytes + view.remaining_bytes
             self.prog_bytes.configure(value=fraction)
             self.lbl_bytes.configure(
-                text=f"{format_size(view.transferred_bytes)} / {format_size(total)} ({fraction * 100:.1f}%)")
+                text=f"{format_size(view.rescued_bytes)} / {format_size(view.total_bytes)} ({fraction * 100:.1f}%)")
         self.lbl_speed.configure(text=t("speed", rate=format_rate(view.rate_bytes_s)))
         self.lbl_eta.configure(text=t("eta", eta=format_eta(view.eta_seconds, self.lang)))
         current = f"{view.current_path} ({format_size(view.current_bytes)})" if view.current_path else "—"

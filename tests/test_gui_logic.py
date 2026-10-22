@@ -579,21 +579,24 @@ def test_snapshot_and_telemetry_from_real_job(tmp_path: Path) -> None:
     assert telemetry.total_files == 2
     assert telemetry.counts["badge_pending"] == 2
     assert telemetry.rescued_files == 0
-    assert telemetry.bytes_fraction is None
+    assert telemetry.bytes_fraction == 0.0 and telemetry.total_bytes > 0
 
 
-def snapshot_with(activity: dict, counts: dict) -> JobSnapshot:
-    return JobSnapshot(JOB, Path("/s"), Path("/d"), "customer-home", (), counts, activity, "", {}, ())
+def snapshot_with(activity: dict, counts: dict, byte_counts: dict | None = None) -> JobSnapshot:
+    return JobSnapshot(JOB, Path("/s"), Path("/d"), "customer-home", (), counts, activity, "", {}, (),
+                       byte_counts=byte_counts or {})
 
 
 def test_telemetry_running_and_paused() -> None:
     running = telemetry_from(snapshot_with(
         {"state": "running", "rate_bytes_s": 2e6, "eta_seconds": 30, "path": "a", "current_bytes": 5,
          "transferred_bytes": 25, "remaining_bytes": 75},
-        {"copied": 3, "copied_from_fallback": 1, "pending": 2, "copying": 1, "failed": 1}))
+        {"copied": 3, "copied_from_fallback": 1, "pending": 2, "copying": 1, "failed": 1},
+        {"copied": 30, "copied_from_fallback": 10, "pending": 40, "copying": 10, "failed": 10}))
     assert running.rescued_files == 4 and running.total_files == 8
     assert running.counts["badge_pending"] == 3
-    assert running.bytes_fraction == 0.25
+    # whole-manifest bytes (like the file counter), not the current invocation's transfer
+    assert running.bytes_fraction == 0.4 and running.rescued_bytes == 40 and running.total_bytes == 100
     assert running.current_path == "a" and running.eta_seconds == 30
     paused = telemetry_from(snapshot_with({"state": "paused", "reason": "source unavailable", "rate_bytes_s": 9,
                                            "path": "a"}, {}))
