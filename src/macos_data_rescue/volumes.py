@@ -9,7 +9,8 @@ real binary.
 from __future__ import annotations
 
 import plistlib
-import subprocess
+# only fixed diskutil argv lists are executed, never through a shell
+import subprocess  # nosec B404
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable

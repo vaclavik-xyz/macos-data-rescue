@@ -1,9 +1,16 @@
 """GUI tests. Widget tests need a display and skip cleanly without one.
 
+They also skip on GitHub Actions: on the hosted macOS runners Tk's
+``update()`` blocks indefinitely inside these tests (seen from the first GUI
+pull request on), which held every macOS runner until the 6 h job timeout.
+The display-free logic in ``test_gui_logic.py`` still runs there; set
+``MDR_GUI_TESTS=1`` to force the widget tests anyway.
+
 Commands run through the real CLI in a child process; sleep inhibition is
 replaced by a no-op so tests never start /usr/bin/caffeinate.
 """
 import gc
+import os
 import re
 import sqlite3
 import subprocess
@@ -92,6 +99,8 @@ class NoKeepAwake:
 
 @pytest.fixture
 def root():
+    if os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("MDR_GUI_TESTS") != "1":
+        pytest.skip("Tk widget tests hang on hosted macOS runners; see module docstring")
     try:
         window = tk.Tk()
     except tk.TclError:
