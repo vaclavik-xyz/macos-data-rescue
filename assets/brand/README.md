@@ -12,6 +12,6 @@ Generated delivery files:
 - `favicon-16x16.png`, `favicon-32x32.png`, and `favicon-48x48.png` — browser favicon sizes.
 - `favicon.ico` — multi-size ICO containing 16, 32, 48, and 256 pixel variants.
 - `og-image.png` — 1200 × 630 Open Graph image.
-- `../icon.svg` — copy of `Favicon.svg` at a conventional path where tools such as T3 Code discover the project icon; keep it in sync when the master changes.
+- `../icon.svg` — copy of `Favicon.svg` at a conventional path where tools such as T3 Code discover the project icon; `tests/test_brand_assets.py` fails when it drifts from the master.
 
 Core palette: navy `#0b1730`, rescue green `#27cda5`, mint `#8fe3d0`, and signal yellow `#ffc84a`.
