@@ -44,3 +44,5 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# dump every thread's stack when one test runs this long, so a CI hang names its test
+faulthandler_timeout = 120

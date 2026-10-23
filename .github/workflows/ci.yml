@@ -15,6 +15,7 @@ concurrency:
 jobs:
   quality:
     runs-on: macos-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v8.3.2
@@ -31,6 +32,8 @@ jobs:
 
   test:
     runs-on: macos-latest
+    # a hung test must not hold a macOS runner for the 6 h default
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
