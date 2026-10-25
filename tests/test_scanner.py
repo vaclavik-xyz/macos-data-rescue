@@ -5,6 +5,7 @@ import sqlite3
 import time
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from helpers import run_cli, write_file, init_and_scan, file_rows, config_value
 
@@ -231,9 +232,13 @@ def test_scan_timeout_commits_partial_manifest(tmp_path: Path, monkeypatch) -> N
     run_cli("init", "--job-dir", str(job_dir), "--source", str(source), "--dest", str(dest_dir))
     run_cli("approve", "--job-dir", str(job_dir), "--phase", "library")
 
+    # A fake clock keeps this independent of runner speed: the deadline passes
+    # while the first file is being read, never during manifest setup.
+    clock = [0.0]
+
     def slow_files(source_path: Path, *, phase: str, excludes=(), **kwargs):
         for index in range(5):
-            time.sleep(0.02)
+            clock[0] += 1
             yield ScannedFile(
                 relative_path=f"{index}.txt",
                 size=1,
@@ -244,8 +249,9 @@ def test_scan_timeout_commits_partial_manifest(tmp_path: Path, monkeypatch) -> N
             )
 
     monkeypatch.setattr(scanner, "iter_source_files", slow_files)
+    monkeypatch.setattr(scanner, "time", SimpleNamespace(monotonic=lambda: clock[0]))
 
-    summary = scanner.scan_job(job_dir, phase="all", timeout=0.01, batch_size=1)
+    summary = scanner.scan_job(job_dir, phase="all", timeout=0.5, batch_size=1)
 
     rows = file_rows(job_dir)
     assert summary.scanned == 1
